@@ -1,4 +1,5 @@
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 import structlog
@@ -151,7 +152,7 @@ def extract_requirements(
             model=model,
             max_tokens=EXTRACTION_MAX_TOKENS,
         )
-    else:
+    elif settings.LLM_PROVIDER == "anthropic":
         result = _call_anthropic(
             system=EXTRACTION_SYSTEM_PROMPT,
             user_message=transcription,
@@ -159,6 +160,8 @@ def extract_requirements(
             max_tokens=EXTRACTION_MAX_TOKENS,
             thinking_budget=None,
         )
+    else:
+        raise LLMServiceError(f"Unsupported LLM_PROVIDER: {settings.LLM_PROVIDER}")
 
     return result["estimation"], {
         "input": result["usage"]["input_tokens"],
@@ -222,7 +225,7 @@ def generate_estimation(
                 model=model,
                 max_tokens=opts.max_tokens,
             )
-        else:
+        elif settings.LLM_PROVIDER == "anthropic":
             result = _call_anthropic(
                 system=system_prompt,
                 user_message=user_input,
@@ -230,6 +233,8 @@ def generate_estimation(
                 max_tokens=opts.max_tokens,
                 thinking_budget=opts.thinking_budget,
             )
+        else:
+            raise LLMServiceError(f"Unsupported LLM_PROVIDER: {settings.LLM_PROVIDER}")
     except LLMServiceError:
         raise
     except Exception as exc:
@@ -243,6 +248,63 @@ def generate_estimation(
     result["latency_ms"] = int((time.perf_counter() - t0) * 1000)
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Streaming entrypoint
+# ---------------------------------------------------------------------------
+
+
+def stream_estimation(
+    messages: list[dict[str, str]],
+    opts: GenerationOptions | None = None,
+    meta: dict | None = None,
+) -> Iterator[str]:
+    """Stream estimation text tokens from the configured LLM.
+
+    Yields text chunks as they arrive. After the stream completes, ``meta`` is
+    populated with ``model``, ``provider``, ``finish_reason``, and ``usage``.
+    """
+    opts = opts or GenerationOptions()
+    settings = get_settings()
+    if meta is None:
+        meta = {}
+
+    system_prompt = build_system_prompt(
+        example_format=opts.example_format,
+        num_examples=opts.num_examples,
+        use_examples=opts.use_examples,
+        inline_cleaning=(opts.preprocessing == "inline_cleaning"),
+    )
+    model = opts.model or settings.LLM_MODEL
+
+    log.info(
+        "streaming_estimation",
+        provider=settings.LLM_PROVIDER,
+        model=model,
+        preprocessing=opts.preprocessing,
+        example_format=opts.example_format,
+        num_examples=opts.num_examples,
+        use_examples=opts.use_examples,
+        max_tokens=opts.max_tokens,
+        thinking_budget=opts.thinking_budget,
+    )
+
+    try:
+        if settings.LLM_PROVIDER == "openai":
+            if opts.thinking_budget is not None:
+                log.warning("thinking_budget_ignored_for_provider", provider="openai")
+            openai_messages = [{"role": "system", "content": system_prompt}, *messages]
+            yield from _stream_openai(openai_messages, model, opts.max_tokens, meta)
+        elif settings.LLM_PROVIDER == "anthropic":
+            raise LLMServiceError("Streaming not yet implemented for provider: anthropic")
+        else:
+            raise LLMServiceError(f"Streaming not supported for provider: {settings.LLM_PROVIDER}")
+    except LLMServiceError:
+        raise
+    except Exception as exc:
+        log.error("llm_stream_failed", error=str(exc), provider=settings.LLM_PROVIDER)
+        raise LLMServiceError(f"LLM stream failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +348,62 @@ def _call_openai(messages: list[dict], model: str, max_tokens: int) -> dict:
             "total_tokens": usage.total_tokens,
         },
     }
+
+
+def _stream_openai(
+    messages: list[dict],
+    model: str,
+    max_tokens: int,
+    meta: dict,
+) -> Iterator[str]:
+    """Stream a chat completion from OpenAI, yielding text deltas."""
+    from openai import OpenAI
+
+    settings = get_settings()
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+
+    stream = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        max_tokens=max_tokens,
+        stream=True,
+        stream_options={"include_usage": True},
+    )
+
+    finish_reason = "stop"
+    response_model = model
+
+    for chunk in stream:
+        if chunk.choices:
+            delta = chunk.choices[0].delta
+            if delta.content:
+                yield delta.content
+            if chunk.choices[0].finish_reason:
+                finish_reason = chunk.choices[0].finish_reason
+        if chunk.model:
+            response_model = chunk.model
+        if chunk.usage:
+            meta.update(
+                {
+                    "model": response_model,
+                    "provider": "openai",
+                    "finish_reason": finish_reason,
+                    "usage": {
+                        "input_tokens": chunk.usage.prompt_tokens,
+                        "output_tokens": chunk.usage.completion_tokens,
+                        "total_tokens": chunk.usage.total_tokens,
+                    },
+                }
+            )
+
+    log.info(
+        "llm_stream_completed",
+        provider="openai",
+        model=meta.get("model", response_model),
+        finish_reason=meta.get("finish_reason", finish_reason),
+        input_tokens=meta.get("usage", {}).get("input_tokens"),
+        output_tokens=meta.get("usage", {}).get("output_tokens"),
+    )
 
 
 def _call_anthropic(
