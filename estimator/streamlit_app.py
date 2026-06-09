@@ -62,6 +62,17 @@ with st.sidebar:
             label_visibility="collapsed",
         )
 
+    st.subheader("Last call")
+    if st.session_state.last_call:
+        last_call = st.session_state.last_call
+        st.text_input("Call model", value=str(last_call.get("model", "")), disabled=True)
+        token_cols = st.columns(2)
+        token_cols[0].metric("Input tokens", last_call.get("input_tokens", 0))
+        token_cols[1].metric("Output tokens", last_call.get("output_tokens", 0))
+        st.metric("Latency (ms)", last_call.get("latency_ms", 0))
+    else:
+        st.caption("No estimation calls yet.")
+
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
