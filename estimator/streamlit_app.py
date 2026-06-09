@@ -29,3 +29,7 @@ for key, value in streamlit_helpers.initial_session_state().items():
 
 if "opts" not in st.session_state:
     st.session_state.opts = streamlit_helpers.default_generation_options()
+
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
