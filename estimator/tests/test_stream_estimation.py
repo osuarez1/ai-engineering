@@ -4,7 +4,7 @@ import pytest
 
 from app.config import get_settings
 from app.services import llm_service
-from app.services.llm_service import LLMServiceError, stream_estimation
+from app.services.llm_service import stream_estimation
 
 
 @pytest.fixture
@@ -13,6 +13,17 @@ def openai_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture
+def gemini_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Configure Gemini provider with a fake key."""
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-test-key")
+    monkeypatch.setenv("LLM_MODEL", "gemini-2.0-flash")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -97,12 +108,47 @@ def test_stream_anthropic_yields_tokens_and_meta(
     assert meta["finish_reason"] == "end_turn"
 
 
-def test_stream_unsupported_provider_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("LLM_PROVIDER", "gemini")
-    monkeypatch.setenv("GEMINI_API_KEY", "gemini-test-key")
-    get_settings.cache_clear()
+def test_stream_gemini_yields_tokens_and_meta(
+    monkeypatch: pytest.MonkeyPatch, gemini_settings: None
+) -> None:
+    meta: dict = {}
 
-    with pytest.raises(LLMServiceError, match="Streaming not supported for provider: gemini"):
-        list(stream_estimation([{"role": "user", "content": "hi"}]))
+    def fake_stream(
+        system: str,
+        messages: list[dict[str, str]],
+        model: str,
+        max_tokens: int,
+        meta: dict,
+    ) -> Iterator[str]:
+        assert "software consultant" in system
+        assert messages[-1]["role"] == "user"
+        assert model == "gemini-2.0-flash"
+        assert max_tokens == 4000
+        meta.update(
+            {
+                "model": model,
+                "provider": "gemini",
+                "finish_reason": "stop",
+                "usage": {"input_tokens": 150, "output_tokens": 60, "total_tokens": 210},
+            }
+        )
+        yield from ["Gemini", " stream"]
 
-    get_settings.cache_clear()
+    monkeypatch.setattr(llm_service, "_stream_gemini", fake_stream)
+
+    tokens = list(stream_estimation([{"role": "user", "content": "estimate this"}], meta=meta))
+
+    assert tokens == ["Gemini", " stream"]
+    assert meta["provider"] == "gemini"
+    assert meta["usage"]["total_tokens"] == 210
+
+
+def test_to_gemini_contents_maps_assistant_to_model() -> None:
+    contents = llm_service._to_gemini_contents(
+        [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+    )
+    assert contents[0].role == "user"
+    assert contents[1].role == "model"
