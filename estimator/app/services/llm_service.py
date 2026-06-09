@@ -297,7 +297,14 @@ def stream_estimation(
             openai_messages = [{"role": "system", "content": system_prompt}, *messages]
             yield from _stream_openai(openai_messages, model, opts.max_tokens, meta)
         elif settings.LLM_PROVIDER == "anthropic":
-            raise LLMServiceError("Streaming not yet implemented for provider: anthropic")
+            yield from _stream_anthropic(
+                system_prompt,
+                messages,
+                model,
+                opts.max_tokens,
+                opts.thinking_budget,
+                meta,
+            )
         else:
             raise LLMServiceError(f"Streaming not supported for provider: {settings.LLM_PROVIDER}")
     except LLMServiceError:
@@ -461,3 +468,55 @@ def _call_anthropic(
             "total_tokens": response.usage.input_tokens + response.usage.output_tokens,
         },
     }
+
+
+def _stream_anthropic(
+    system: str,
+    messages: list[dict[str, str]],
+    model: str,
+    max_tokens: int,
+    thinking_budget: int | None,
+    meta: dict,
+) -> Iterator[str]:
+    """Stream a message response from Anthropic, yielding text deltas."""
+    from anthropic import Anthropic
+
+    settings = get_settings()
+    client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+    kwargs: dict = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system,
+        "messages": messages,
+    }
+    if thinking_budget is not None:
+        kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+        kwargs["max_tokens"] = max(max_tokens, thinking_budget + 1024)
+
+    with client.messages.stream(**kwargs) as stream:
+        yield from stream.text_stream
+        final = stream.get_final_message()
+
+    finish_reason = final.stop_reason or "stop"
+    meta.update(
+        {
+            "model": final.model,
+            "provider": "anthropic",
+            "finish_reason": finish_reason,
+            "usage": {
+                "input_tokens": final.usage.input_tokens,
+                "output_tokens": final.usage.output_tokens,
+                "total_tokens": final.usage.input_tokens + final.usage.output_tokens,
+            },
+        }
+    )
+
+    log.info(
+        "llm_stream_completed",
+        provider="anthropic",
+        model=meta["model"],
+        finish_reason=finish_reason,
+        input_tokens=meta["usage"]["input_tokens"],
+        output_tokens=meta["usage"]["output_tokens"],
+    )
