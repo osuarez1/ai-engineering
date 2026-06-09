@@ -2,42 +2,8 @@ from collections.abc import Iterator
 
 import pytest
 
-from app.config import get_settings
 from app.services import llm_service
 from app.services.llm_service import stream_estimation
-
-
-@pytest.fixture
-def openai_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Configure OpenAI provider with a fake key."""
-    monkeypatch.setenv("LLM_PROVIDER", "openai")
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
-    get_settings.cache_clear()
-    yield
-    get_settings.cache_clear()
-
-
-@pytest.fixture
-def gemini_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Configure Gemini provider with a fake key."""
-    monkeypatch.setenv("LLM_PROVIDER", "gemini")
-    monkeypatch.setenv("GEMINI_API_KEY", "gemini-test-key")
-    monkeypatch.setenv("LLM_MODEL", "gemini-2.0-flash")
-    get_settings.cache_clear()
-    yield
-    get_settings.cache_clear()
-
-
-@pytest.fixture
-def anthropic_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Configure Anthropic provider with a fake key."""
-    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-    monkeypatch.setenv("LLM_MODEL", "claude-haiku-4-5")
-    get_settings.cache_clear()
-    yield
-    get_settings.cache_clear()
 
 
 def test_stream_openai_yields_tokens_and_meta(
