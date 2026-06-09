@@ -28,11 +28,14 @@ uv run pytest tests/test_health.py::test_name -v
 uv run ruff check .
 uv run ruff format .
 
+# Streamlit chat UI (Session 3 — imports app.* directly, no uvicorn required)
+uv run streamlit run streamlit_app.py
+
 # Docker (recommended dev path — bind-mounts app/ for live reload)
 docker compose up --build
 ```
 
-Service listens on `http://localhost:8000`; `/docs` (Swagger) and `/redoc` are enabled. Health probe at `GET /health`. Main API endpoint is `POST /api/v1/estimate`.
+Service listens on `http://localhost:8000`; `/docs` (Swagger) and `/redoc` are enabled. Health probe at `GET /health`. Main API endpoint is `POST /api/v1/estimate`. The Streamlit UI listens on `http://localhost:8501`.
 
 ## Architecture
 
@@ -41,18 +44,21 @@ The estimator is a FastAPI service implementing **Cache Augmented Generation (CA
 Request flow:
 
 1. `app/routers/estimations.py` — `POST /api/v1/estimate` accepts an `EstimationRequest` (transcription + optional knobs: `preprocessing`, `example_format`, `num_examples`, `use_examples`, `model`, `max_tokens`, `thinking_budget`, `evaluate`).
-2. `app/services/llm_service.py::generate_estimation` — builds a `GenerationOptions`, optionally runs `extract_requirements` for two-phase preprocessing, builds the system prompt (`build_system_prompt`), and dispatches to either `_call_openai` or `_call_anthropic` based on `LLM_PROVIDER`. Returns a dict with `estimation`, `model`, `provider`, `usage`, `finish_reason`, `latency_ms`, `preprocessing`, `extracted_requirements`.
+2. `app/services/llm_service.py::generate_estimation` — builds a `GenerationOptions`, optionally runs `extract_requirements` for two-phase preprocessing, builds the system prompt (`build_system_prompt`), and dispatches to `_call_openai`, `_call_anthropic`, or `_call_gemini` based on `LLM_PROVIDER`. Returns a dict with `estimation`, `model`, `provider`, `usage`, `finish_reason`, `latency_ms`, `preprocessing`, `extracted_requirements`.
 3. `app/services/evaluation.py::evaluate_estimation_structure` — pure regex/parsing pass that produces a `StructureCheck` (sections present, breakdown sums match declared totals, `finish_reason` ok, `score`, `issues`).
 4. The router merges the LLM result with the validation and returns `EstimationResponse`.
 
+**Streamlit UI** (`streamlit_app.py`, Session 3) imports `app.*` directly — no HTTP to FastAPI. Entrypoint is `main()` → `bootstrap()` (page config, settings gate, session init) → `render_sidebar()` → `render_chat()`. Chat uses `stream_estimation` + `st.write_stream` for token streaming; pure UI logic lives in `app/ui/streamlit_helpers.py`.
+
 Key design points future changes should respect:
 
-- **Provider abstraction lives in one file** (`llm_service.py`). Both branches return the same dict shape (`estimation`, `model`, `provider`, `finish_reason`, `usage`) so the router stays provider-agnostic. Keep that contract when adding providers.
+- **Provider abstraction lives in one file** (`llm_service.py`). All three providers return the same dict shape (`estimation`, `model`, `provider`, `finish_reason`, `usage`) so the router and Streamlit UI stay provider-agnostic. `stream_estimation(messages, opts, meta)` yields tokens and populates `meta` with the same fields after the stream completes.
 - **Settings are a cached singleton** via `app/config.py::get_settings` (`@lru_cache`). Pydantic Settings runs a `model_validator` that requires the API key matching `LLM_PROVIDER` to be set — changing provider also requires changing the key. Because of the cache, **any change to `.env` requires restarting uvicorn** (a `--reload` is not enough; the singleton is module-scoped).
 - **CAG examples** live in `app/context/examples.py`. The single source of truth is `CANONICAL_EXAMPLES: list[CanonicalExample]`; the three formatters (`_format_markdown`, `_format_json`, `_format_narrative`) derive their output from it. `estimation_markdown` is precomputed per example so the Markdown rendering stays byte-for-byte stable. When this graduates to RAG, this module is the seam to replace.
 - **Pricing assumptions** (62.50 EUR/h dev, 50 EUR/h designer) live in `build_system_prompt`. Edit there, not in examples. Each canonical example must satisfy `sum_h == total_hours` and `sum_c == total_cost` (a unit test enforces this).
 - **Output prompt switch**: `llm_service.py` defines `PROMPT_OUTPUT_BASIC` and `PROMPT_OUTPUT_STRUCTURED`; the `ACTIVE_OUTPUT_PROMPT` line picks one. The Session 2 live demo flips this constant on the fly.
-- **`thinking_budget` is Anthropic-only** — for OpenAI it is logged as a warning and ignored. The Anthropic wrapper auto-pads `max_tokens` so it stays above the budget.
+- **`thinking_budget` is Anthropic-only** — for OpenAI and Gemini it is logged as a warning and ignored. The Anthropic wrapper auto-pads `max_tokens` so it stays above the budget.
+- **Streamlit helpers** (`app/ui/streamlit_helpers.py`) hold testable pure functions: session defaults, message mapping, `build_last_call`, sidebar prompt/CAG builders. Keep `streamlit_app.py` thin.
 - **Logging** is `structlog`, configured in `lifespan` (`main.py`): JSON in `production`, console in dev. Use `structlog.get_logger()` rather than stdlib `logging`.
 
 ## How to compare in live demos
@@ -83,9 +89,9 @@ The full session script lives in `estimator/docs/session-2-guide.md`.
 
 `.env` (copied from `.env.example`) drives everything via `pydantic-settings`. Notable vars:
 
-- `LLM_PROVIDER` — `openai` (default) or `anthropic`.
-- `LLM_MODEL` — model id passed straight through to the SDK (e.g. `gpt-4o-mini`, `claude-...`).
-- `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` — only the one matching `LLM_PROVIDER` is required.
+- `LLM_PROVIDER` — `openai`, `anthropic` (default), or `gemini`.
+- `LLM_MODEL` — model id passed straight through to the SDK (e.g. `gpt-4o-mini`, `claude-haiku-4-5`, `gemini-2.0-flash`).
+- `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` — only the one matching `LLM_PROVIDER` is required.
 - `APP_ENV` — `development` | `staging` | `production` (controls log renderer).
 
 ## Docker
