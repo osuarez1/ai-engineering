@@ -33,6 +33,17 @@ for key, value in streamlit_helpers.initial_session_state().items():
 if "opts" not in st.session_state:
     st.session_state.opts = streamlit_helpers.default_generation_options()
 
+with st.sidebar:
+    st.header("Configuration")
+    st.text_input("Provider", value=settings.LLM_PROVIDER, disabled=True)
+    st.text_input("Model", value=settings.LLM_MODEL, disabled=True)
+    st.session_state.opts.num_examples = st.slider(
+        "CAG examples",
+        min_value=0,
+        max_value=5,
+        value=st.session_state.opts.num_examples,
+    )
+
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
