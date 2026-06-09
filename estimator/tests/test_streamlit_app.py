@@ -15,10 +15,24 @@ TRANSCRIPT = (
 )
 
 
+def _load_app() -> AppTest:
+    """Load the app script; Streamlit runs main() via the __main__ guard."""
+    return AppTest.from_file(str(STREAMLIT_APP))
+
+
 @pytest.fixture
 def streamlit_app(openai_settings: None) -> AppTest:
     """Load the Streamlit app with fake OpenAI settings."""
-    return AppTest.from_file(str(STREAMLIT_APP))
+    return _load_app()
+
+
+def test_streamlit_app_module_is_importable_without_side_effects() -> None:
+    import streamlit_app
+
+    assert callable(streamlit_app.main)
+    assert callable(streamlit_app.bootstrap)
+    assert callable(streamlit_app.render_sidebar)
+    assert callable(streamlit_app.render_chat)
 
 
 def test_streamlit_app_loads(streamlit_app: AppTest) -> None:
@@ -35,7 +49,7 @@ def test_streamlit_app_missing_api_key_shows_error(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     get_settings.cache_clear()
 
-    app = AppTest.from_file(str(STREAMLIT_APP))
+    app = _load_app()
     app.run()
 
     assert not app.exception
@@ -70,7 +84,7 @@ def test_streamlit_app_chat_flow_streams_assistant_reply(
 
     monkeypatch.setattr(llm_service, "stream_estimation", fake_stream)
 
-    app = AppTest.from_file(str(STREAMLIT_APP))
+    app = _load_app()
     app.run()
     app.chat_input[0].set_value(TRANSCRIPT).run()
 
@@ -96,7 +110,7 @@ def test_streamlit_app_shows_error_when_stream_fails(
 
     monkeypatch.setattr(llm_service, "stream_estimation", failing_stream)
 
-    app = AppTest.from_file(str(STREAMLIT_APP))
+    app = _load_app()
     app.run()
     app.chat_input[0].set_value(TRANSCRIPT).run()
 
