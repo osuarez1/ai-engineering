@@ -5,7 +5,7 @@ import time
 import streamlit as st
 
 from app.config import Settings, get_settings
-from app.services.llm_service import stream_estimation
+from app.services.llm_service import LLMServiceError, stream_estimation
 from app.ui import streamlit_helpers
 
 st.set_page_config(page_title="Software Estimator", layout="wide")
@@ -47,10 +47,15 @@ if prompt := st.chat_input("Paste a meeting transcript or ask a follow-up..."):
     t0 = time.perf_counter()
 
     with st.chat_message("assistant"):
-        full_text = st.write_stream(
-            stream_estimation(api_messages, st.session_state.opts, meta=meta)
-        )
+        try:
+            full_text = st.write_stream(
+                stream_estimation(api_messages, st.session_state.opts, meta=meta)
+            )
+        except LLMServiceError as exc:
+            st.error(f"**Estimation failed:** {exc}")
+            full_text = ""
 
-    latency_ms = int((time.perf_counter() - t0) * 1000)
-    st.session_state.last_call = streamlit_helpers.build_last_call(meta, latency_ms=latency_ms)
-    st.session_state.messages.append({"role": "assistant", "content": full_text})
+    if full_text:
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+        st.session_state.last_call = streamlit_helpers.build_last_call(meta, latency_ms=latency_ms)
+        st.session_state.messages.append({"role": "assistant", "content": full_text})
