@@ -53,6 +53,15 @@ with st.sidebar:
             label_visibility="collapsed",
         )
 
+    with st.expander("CAG examples", expanded=False):
+        st.text_area(
+            "CAG examples",
+            value=streamlit_helpers.sidebar_cag_context(st.session_state.opts),
+            height=300,
+            disabled=True,
+            label_visibility="collapsed",
+        )
+
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
