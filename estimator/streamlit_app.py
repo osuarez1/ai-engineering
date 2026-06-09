@@ -3,6 +3,7 @@
 import streamlit as st
 
 from app.config import Settings, get_settings
+from app.ui import streamlit_helpers
 
 st.set_page_config(page_title="Software Estimator", layout="wide")
 
@@ -21,3 +22,10 @@ except ValueError as exc:
         "matching your `LLM_PROVIDER`. Restart Streamlit after editing `.env`."
     )
     st.stop()
+
+for key, value in streamlit_helpers.initial_session_state().items():
+    if key not in st.session_state:
+        st.session_state[key] = value
+
+if "opts" not in st.session_state:
+    st.session_state.opts = streamlit_helpers.default_generation_options()
