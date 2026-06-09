@@ -7,9 +7,9 @@ from app.services import llm_service
 from app.services.llm_service import LLMServiceError, stream_estimation
 
 
-@pytest.fixture(autouse=True)
-def openai_test_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Use OpenAI provider with a fake key for stream_estimation tests."""
+@pytest.fixture
+def openai_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Configure OpenAI provider with a fake key."""
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
@@ -18,7 +18,20 @@ def openai_test_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
 
 
-def test_stream_openai_yields_tokens_and_meta(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def anthropic_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Configure Anthropic provider with a fake key."""
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("LLM_MODEL", "claude-haiku-4-5")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def test_stream_openai_yields_tokens_and_meta(
+    monkeypatch: pytest.MonkeyPatch, openai_settings: None
+) -> None:
     meta: dict = {}
 
     def fake_stream(
@@ -47,6 +60,43 @@ def test_stream_openai_yields_tokens_and_meta(monkeypatch: pytest.MonkeyPatch) -
     assert meta["usage"]["output_tokens"] == 50
 
 
+def test_stream_anthropic_yields_tokens_and_meta(
+    monkeypatch: pytest.MonkeyPatch, anthropic_settings: None
+) -> None:
+    meta: dict = {}
+
+    def fake_stream(
+        system: str,
+        messages: list[dict[str, str]],
+        model: str,
+        max_tokens: int,
+        thinking_budget: int | None,
+        meta: dict,
+    ) -> Iterator[str]:
+        assert "software consultant" in system
+        assert messages[-1]["role"] == "user"
+        assert model == "claude-haiku-4-5"
+        assert max_tokens == 4000
+        assert thinking_budget is None
+        meta.update(
+            {
+                "model": model,
+                "provider": "anthropic",
+                "finish_reason": "end_turn",
+                "usage": {"input_tokens": 200, "output_tokens": 80, "total_tokens": 280},
+            }
+        )
+        yield from ["Estimate", " ready"]
+
+    monkeypatch.setattr(llm_service, "_stream_anthropic", fake_stream)
+
+    tokens = list(stream_estimation([{"role": "user", "content": "estimate this"}], meta=meta))
+
+    assert tokens == ["Estimate", " ready"]
+    assert meta["provider"] == "anthropic"
+    assert meta["finish_reason"] == "end_turn"
+
+
 def test_stream_unsupported_provider_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "gemini-test-key")
@@ -54,3 +104,5 @@ def test_stream_unsupported_provider_raises(monkeypatch: pytest.MonkeyPatch) -> 
 
     with pytest.raises(LLMServiceError, match="Streaming not supported for provider: gemini"):
         list(stream_estimation([{"role": "user", "content": "hi"}]))
+
+    get_settings.cache_clear()
