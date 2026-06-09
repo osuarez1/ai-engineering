@@ -3,6 +3,7 @@
 import streamlit as st
 
 from app.config import Settings, get_settings
+from app.services.llm_service import generate_estimation
 from app.ui import streamlit_helpers
 
 st.set_page_config(page_title="Software Estimator", layout="wide")
@@ -38,3 +39,15 @@ if prompt := st.chat_input("Paste a meeting transcript or ask a follow-up..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
+
+    transcription = "\n\n".join(
+        f"{message['role'].title()}: {message['content']}"
+        for message in st.session_state.messages
+    )
+
+    with st.chat_message("assistant"):
+        with st.spinner("Generating estimation..."):
+            result = generate_estimation(transcription, st.session_state.opts)
+            st.markdown(result["estimation"])
+
+    st.session_state.messages.append({"role": "assistant", "content": result["estimation"]})
