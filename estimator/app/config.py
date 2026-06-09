@@ -12,7 +12,8 @@ class Settings(BaseSettings):
 
     OPENAI_API_KEY: str | None = None
     ANTHROPIC_API_KEY: str | None = None
-    LLM_PROVIDER: Literal["openai", "anthropic"] = "anthropic"
+    GEMINI_API_KEY: str | None = None
+    LLM_PROVIDER: Literal["openai", "anthropic", "gemini"] = "anthropic"
     LLM_MODEL: str = "claude-haiku-4-5"
     APP_ENV: Literal["development", "staging", "production"] = "development"
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "DEBUG"
@@ -24,6 +25,8 @@ class Settings(BaseSettings):
             raise ValueError("OPENAI_API_KEY is required when LLM_PROVIDER is 'openai'")
         if self.LLM_PROVIDER == "anthropic" and not self.ANTHROPIC_API_KEY:
             raise ValueError("ANTHROPIC_API_KEY is required when LLM_PROVIDER is 'anthropic'")
+        if self.LLM_PROVIDER == "gemini" and not self.GEMINI_API_KEY:
+            raise ValueError("GEMINI_API_KEY is required when LLM_PROVIDER is 'gemini'")
         return self
 
 
