@@ -160,6 +160,13 @@ def extract_requirements(
             max_tokens=EXTRACTION_MAX_TOKENS,
             thinking_budget=None,
         )
+    elif settings.LLM_PROVIDER == "gemini":
+        result = _call_gemini(
+            system=EXTRACTION_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": transcription}],
+            model=model,
+            max_tokens=EXTRACTION_MAX_TOKENS,
+        )
     else:
         raise LLMServiceError(f"Unsupported LLM_PROVIDER: {settings.LLM_PROVIDER}")
 
@@ -233,6 +240,15 @@ def generate_estimation(
                 max_tokens=opts.max_tokens,
                 thinking_budget=opts.thinking_budget,
             )
+        elif settings.LLM_PROVIDER == "gemini":
+            if opts.thinking_budget is not None:
+                log.warning("thinking_budget_ignored_for_provider", provider="gemini")
+            result = _call_gemini(
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_input}],
+                model=model,
+                max_tokens=opts.max_tokens,
+            )
         else:
             raise LLMServiceError(f"Unsupported LLM_PROVIDER: {settings.LLM_PROVIDER}")
     except LLMServiceError:
@@ -305,8 +321,18 @@ def stream_estimation(
                 opts.thinking_budget,
                 meta,
             )
+        elif settings.LLM_PROVIDER == "gemini":
+            if opts.thinking_budget is not None:
+                log.warning("thinking_budget_ignored_for_provider", provider="gemini")
+            yield from _stream_gemini(
+                system_prompt,
+                messages,
+                model,
+                opts.max_tokens,
+                meta,
+            )
         else:
-            raise LLMServiceError(f"Streaming not supported for provider: {settings.LLM_PROVIDER}")
+            raise LLMServiceError(f"Unsupported LLM_PROVIDER: {settings.LLM_PROVIDER}")
     except LLMServiceError:
         raise
     except Exception as exc:
@@ -317,6 +343,43 @@ def stream_estimation(
 # ---------------------------------------------------------------------------
 # Provider wrappers
 # ---------------------------------------------------------------------------
+
+
+def _to_gemini_contents(messages: list[dict[str, str]]) -> list:
+    """Map chat messages to Gemini Content objects (assistant -> model role)."""
+    from google.genai import types
+
+    contents = []
+    for message in messages:
+        role = message["role"]
+        gemini_role = "user" if role == "user" else "model"
+        contents.append(
+            types.Content(
+                role=gemini_role,
+                parts=[types.Part.from_text(text=message["content"])],
+            )
+        )
+    return contents
+
+
+def _normalize_gemini_finish_reason(finish_reason: str | None) -> str:
+    """Map Gemini finish reasons to the shared stop/length vocabulary."""
+    if not finish_reason:
+        return "stop"
+    normalized = finish_reason.lower()
+    if normalized in {"max_tokens", "length"}:
+        return "length"
+    return "stop"
+
+
+def _gemini_usage_dict(usage_metadata) -> dict[str, int]:
+    input_tokens = getattr(usage_metadata, "prompt_token_count", 0) or 0
+    output_tokens = getattr(usage_metadata, "candidates_token_count", 0) or 0
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+    }
 
 
 def _call_openai(messages: list[dict], model: str, max_tokens: int) -> dict:
@@ -519,4 +582,105 @@ def _stream_anthropic(
         finish_reason=finish_reason,
         input_tokens=meta["usage"]["input_tokens"],
         output_tokens=meta["usage"]["output_tokens"],
+    )
+
+
+def _call_gemini(
+    system: str,
+    messages: list[dict[str, str]],
+    model: str,
+    max_tokens: int,
+) -> dict:
+    """Send a generate_content request to the Gemini API."""
+    from google import genai
+    from google.genai import types
+
+    settings = get_settings()
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+
+    response = client.models.generate_content(
+        model=model,
+        contents=_to_gemini_contents(messages),
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=max_tokens,
+        ),
+    )
+
+    finish_reason = "stop"
+    if response.candidates:
+        finish_reason = _normalize_gemini_finish_reason(response.candidates[0].finish_reason)
+
+    usage = _gemini_usage_dict(response.usage_metadata)
+
+    log.info(
+        "llm_response_received",
+        provider="gemini",
+        model=response.model_version or model,
+        finish_reason=finish_reason,
+        input_tokens=usage["input_tokens"],
+        output_tokens=usage["output_tokens"],
+    )
+
+    return {
+        "estimation": response.text or "",
+        "model": response.model_version or model,
+        "provider": "gemini",
+        "finish_reason": finish_reason,
+        "usage": usage,
+    }
+
+
+def _stream_gemini(
+    system: str,
+    messages: list[dict[str, str]],
+    model: str,
+    max_tokens: int,
+    meta: dict,
+) -> Iterator[str]:
+    """Stream a generate_content response from Gemini, yielding text deltas."""
+    from google import genai
+    from google.genai import types
+
+    settings = get_settings()
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+
+    finish_reason = "stop"
+    response_model = model
+    usage_metadata = None
+
+    for chunk in client.models.generate_content_stream(
+        model=model,
+        contents=_to_gemini_contents(messages),
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=max_tokens,
+        ),
+    ):
+        if chunk.text:
+            yield chunk.text
+        if chunk.model_version:
+            response_model = chunk.model_version
+        if chunk.candidates:
+            finish_reason = _normalize_gemini_finish_reason(chunk.candidates[0].finish_reason)
+        if chunk.usage_metadata:
+            usage_metadata = chunk.usage_metadata
+
+    usage = _gemini_usage_dict(usage_metadata)
+    meta.update(
+        {
+            "model": response_model,
+            "provider": "gemini",
+            "finish_reason": finish_reason,
+            "usage": usage,
+        }
+    )
+
+    log.info(
+        "llm_stream_completed",
+        provider="gemini",
+        model=meta["model"],
+        finish_reason=finish_reason,
+        input_tokens=usage["input_tokens"],
+        output_tokens=usage["output_tokens"],
     )
