@@ -1,5 +1,7 @@
 """Streamlit conversational interface for software project estimation."""
 
+import time
+
 import streamlit as st
 
 from app.config import Settings, get_settings
@@ -42,10 +44,13 @@ if prompt := st.chat_input("Paste a meeting transcript or ask a follow-up..."):
 
     api_messages = streamlit_helpers.to_api_messages(st.session_state.messages)
     meta: dict = {}
+    t0 = time.perf_counter()
 
     with st.chat_message("assistant"):
         full_text = st.write_stream(
             stream_estimation(api_messages, st.session_state.opts, meta=meta)
         )
 
+    latency_ms = int((time.perf_counter() - t0) * 1000)
+    st.session_state.last_call = streamlit_helpers.build_last_call(meta, latency_ms=latency_ms)
     st.session_state.messages.append({"role": "assistant", "content": full_text})
