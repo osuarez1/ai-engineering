@@ -33,3 +33,8 @@ if "opts" not in st.session_state:
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+
+if prompt := st.chat_input("Paste a meeting transcript or ask a follow-up..."):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
