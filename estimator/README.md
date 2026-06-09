@@ -16,7 +16,7 @@ En modulos posteriores del master, este servicio evolucionara a una arquitectura
 ## Requisitos previos
 
 - **Docker** y **Docker Compose** instalados
-- Una **API key** de OpenAI o Anthropic
+- Una **API key** de OpenAI, Anthropic o Google Gemini
 - Python **NO** es necesario localmente — todo se ejecuta dentro del contenedor
 
 ## Inicio rapido con Docker (recomendado)
@@ -47,6 +47,18 @@ uv sync
 uv run uvicorn app.main:app --reload
 ```
 
+## Interfaz conversacional (Streamlit)
+
+Chat multi-turno con estimaciones en streaming (Session 3). No requiere uvicorn — importa `app.*` directamente.
+
+```bash
+uv sync
+cp .env.example .env   # configurar API key segun LLM_PROVIDER
+uv run streamlit run streamlit_app.py
+```
+
+Abre `http://localhost:8501`. La barra lateral muestra proveedor, modelo, prompt del sistema, ejemplos CAG y metricas de la ultima llamada.
+
 ## Probar el servicio
 
 ```bash
@@ -62,21 +74,27 @@ curl -X POST http://localhost:8000/api/v1/estimate \
 ```
 estimator/
 ├── app/
-│   ├── main.py            # Aplicacion FastAPI, health check, CORS
-│   ├── config.py           # Configuracion con Pydantic Settings
+│   ├── main.py              # Aplicacion FastAPI, health check, CORS
+│   ├── config.py            # Configuracion con Pydantic Settings
 │   ├── routers/
-│   │   └── estimations.py  # Endpoint POST /api/v1/estimate
+│   │   └── estimations.py   # Endpoint POST /api/v1/estimate
 │   ├── services/
-│   │   └── llm_service.py  # Logica de negocio, llamadas al LLM
+│   │   └── llm_service.py   # LLM sync + streaming (OpenAI, Anthropic, Gemini)
 │   ├── schemas/
-│   │   └── estimation.py   # Modelos Pydantic (request/response)
-│   └── context/
-│       └── examples.py     # Ejemplos de estimacion (contexto CAG)
-├── tests/
-│   └── test_health.py      # Tests basicos
-├── Dockerfile              # Build multi-stage con uv
-├── docker-compose.yml      # Configuracion para desarrollo local
-└── pyproject.toml          # Dependencias y configuracion
+│   │   └── estimation.py    # Modelos Pydantic (request/response)
+│   ├── context/
+│   │   └── examples.py      # Ejemplos de estimacion (contexto CAG)
+│   └── ui/
+│       └── streamlit_helpers.py  # Funciones puras para la UI Streamlit
+├── streamlit_app.py         # Chat UI con streaming (Session 3)
+├── tests/                   # pytest (API, LLM, Streamlit AppTest)
+├── Dockerfile               # Build multi-stage con uv
+├── docker-compose.yml       # Configuracion para desarrollo local
+└── pyproject.toml           # Dependencias y configuracion
+```
+
+```bash
+uv run pytest -v    # 45 tests — sin API keys reales
 ```
 
 ## Documentacion interactiva
