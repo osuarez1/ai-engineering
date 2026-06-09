@@ -44,6 +44,15 @@ with st.sidebar:
         value=st.session_state.opts.num_examples,
     )
 
+    with st.expander("System prompt", expanded=False):
+        st.text_area(
+            "System prompt",
+            value=streamlit_helpers.sidebar_system_prompt(st.session_state.opts),
+            height=300,
+            disabled=True,
+            label_visibility="collapsed",
+        )
+
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
