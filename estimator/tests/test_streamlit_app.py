@@ -38,6 +38,7 @@ def test_streamlit_app_loads(loaded_app: AppTest) -> None:
     assert loaded_app.title[0].value == "Software Estimator"
     assert loaded_app.sidebar.header[0].value == "Configuration"
     assert loaded_app.text_area
+    assert loaded_app.session_state.prompt_version == "v1"
 
 
 def test_bootstrap_shows_configuration_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -83,6 +84,30 @@ def test_form_success_renders_estimation(
     assert loaded_app.session_state.last_estimation is not None
     assert loaded_app.markdown
     assert "Total: 120 hours" in loaded_app.markdown[-1].value
+
+
+def test_form_posts_selected_prompt_version(
+    loaded_app: AppTest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    posted: list[dict] = []
+
+    def fake_post(url: str, **kwargs) -> httpx.Response:
+        posted.append({"url": url, **kwargs})
+        return httpx.Response(
+            200,
+            json={"text": "## Estimate\n\nTotal: 120 hours", "prompt_version": "v2"},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(estimator_ui.httpx, "post", fake_post)
+
+    loaded_app.session_state.prompt_version = "v2"
+    loaded_app.text_area[0].set_value(VALID_DESCRIPTION)
+    loaded_app.button[0].click().run()
+
+    assert not loaded_app.exception
+    assert posted[0]["params"] == {"prompt_version": "v2"}
+    assert loaded_app.session_state.last_estimation.prompt_version == "v2"
 
 
 def test_form_http_status_error(
