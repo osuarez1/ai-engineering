@@ -22,6 +22,13 @@ def test_render_estimation_prompt_v1() -> None:
     assert REQUEST.description in user
 
 
+def test_render_estimation_prompt_v2() -> None:
+    system, user = render_estimation_prompt(REQUEST, version="v2")
+    assert "pragmatic technical delivery lead" in system
+    assert "## Client brief" in user
+    assert REQUEST.description in user
+
+
 def test_unknown_prompt_version_raises() -> None:
     with pytest.raises(ValueError, match="Unknown prompt version: missing"):
         render_estimation_prompt(REQUEST, version="missing")
