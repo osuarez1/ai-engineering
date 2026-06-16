@@ -1,118 +1,147 @@
-from collections.abc import Iterator
 from pathlib import Path
+from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from app.config import get_settings
-from app.context.examples import CANONICAL_EXAMPLES
-from app.services import llm_service
-from app.services.llm_service import LLMServiceError
+import streamlit_app as estimator_ui
+from app.schemas.request_form import EstimationResponse
 
 STREAMLIT_APP = Path(__file__).resolve().parents[1] / "streamlit_app.py"
-TRANSCRIPT = (
-    "We need a small CRM with auth, contacts and roles. MVP delivery in six weeks."
+VALID_DESCRIPTION = (
+    "We need a small CRM with auth, contacts and roles. MVP in six weeks."
 )
 
 
 def _load_app() -> AppTest:
-    """Load the app script; Streamlit runs main() via the __main__ guard."""
     return AppTest.from_file(str(STREAMLIT_APP))
 
 
 @pytest.fixture
-def streamlit_app(openai_settings: None) -> AppTest:
-    """Load the Streamlit app with fake OpenAI settings."""
-    return _load_app()
+def loaded_app(openai_settings: None) -> AppTest:
+    app = _load_app()
+    app.run()
+    return app
 
 
 def test_streamlit_app_module_is_importable_without_side_effects() -> None:
-    import streamlit_app
-
-    assert callable(streamlit_app.main)
-    assert callable(streamlit_app.bootstrap)
-    assert callable(streamlit_app.render_sidebar)
-    assert callable(streamlit_app.render_chat)
-
-
-def test_streamlit_app_loads(streamlit_app: AppTest) -> None:
-    streamlit_app.run()
-
-    assert not streamlit_app.exception
-    assert streamlit_app.title[0].value == "Software Estimator"
-    assert streamlit_app.sidebar.header[0].value == "Configuration"
-    assert streamlit_app.chat_input
+    assert callable(estimator_ui.main)
+    assert callable(estimator_ui.bootstrap)
+    assert callable(estimator_ui.render_sidebar)
+    assert callable(estimator_ui.render_form)
+    assert estimator_ui._enum_label(estimator_ui.ProjectType.WEB_SAAS) == "Web Saas"
 
 
-def test_streamlit_app_missing_api_key_shows_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setenv("LLM_PROVIDER", "openai")
-    get_settings.cache_clear()
-
-    app = _load_app()
-    app.run()
-
-    assert not app.exception
-    assert any("LLM configuration error" in error.value for error in app.error)
+def test_streamlit_app_loads(loaded_app: AppTest) -> None:
+    assert not loaded_app.exception
+    assert loaded_app.title[0].value == "Software Estimator"
+    assert loaded_app.sidebar.header[0].value == "Configuration"
+    assert loaded_app.text_area
 
 
-def test_streamlit_app_chat_flow_streams_assistant_reply(
-    monkeypatch: pytest.MonkeyPatch, openai_settings: None
+def test_bootstrap_shows_configuration_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_st = MagicMock()
+
+    def boom() -> None:
+        raise ValueError("OPENAI_API_KEY is required when LLM_PROVIDER is 'openai'")
+
+    mock_st.stop.side_effect = StopIteration
+    monkeypatch.setattr(estimator_ui, "st", mock_st)
+    monkeypatch.setattr(estimator_ui, "get_settings", boom)
+
+    with pytest.raises(StopIteration):
+        estimator_ui.bootstrap()
+
+    mock_st.error.assert_called_once()
+    assert "LLM configuration error" in mock_st.error.call_args.args[0]
+
+
+def test_form_validation_error_on_short_description(loaded_app: AppTest) -> None:
+    loaded_app.text_area[0].set_value("too short")
+    loaded_app.button[0].click().run()
+
+    assert not loaded_app.exception
+    assert loaded_app.error
+    assert "description" in loaded_app.error[0].value.lower()
+
+
+def test_form_success_renders_estimation(
+    loaded_app: AppTest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    estimation = CANONICAL_EXAMPLES[0].estimation_markdown
+    response = httpx.Response(
+        200,
+        json={"text": "## Estimate\n\nTotal: 120 hours", "prompt_version": "v1"},
+        request=httpx.Request("POST", estimator_ui.API_ESTIMATE_URL),
+    )
+    monkeypatch.setattr(estimator_ui.httpx, "post", lambda *args, **kwargs: response)
 
-    def fake_stream(
-        messages: list[dict[str, str]],
-        opts=None,
-        meta: dict | None = None,
-    ) -> Iterator[str]:
-        assert messages[-1]["content"] == TRANSCRIPT
-        if meta is not None:
-            meta.update(
-                {
-                    "model": "gpt-4o-mini",
-                    "provider": "openai",
-                    "finish_reason": "stop",
-                    "usage": {
-                        "input_tokens": 100,
-                        "output_tokens": 50,
-                        "total_tokens": 150,
-                    },
-                }
-            )
-        yield estimation
+    loaded_app.text_area[0].set_value(VALID_DESCRIPTION)
+    loaded_app.button[0].click().run()
 
-    monkeypatch.setattr(llm_service, "stream_estimation", fake_stream)
-
-    app = _load_app()
-    app.run()
-    app.chat_input[0].set_value(TRANSCRIPT).run()
-
-    assert not app.exception
-    assert any(estimation[:40] in markdown.value for markdown in app.markdown)
-    assert any(TRANSCRIPT in markdown.value for markdown in app.markdown)
-
-    app.run()
-    metric_labels = [metric.label for metric in app.sidebar.metric]
-    assert metric_labels == ["Input tokens", "Output tokens", "Latency (ms)"]
+    assert not loaded_app.exception
+    assert loaded_app.session_state.last_estimation is not None
+    assert loaded_app.markdown
+    assert "Total: 120 hours" in loaded_app.markdown[-1].value
 
 
-def test_streamlit_app_shows_error_when_stream_fails(
-    monkeypatch: pytest.MonkeyPatch, openai_settings: None
+def test_form_http_status_error(
+    loaded_app: AppTest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def failing_stream(
-        messages: list[dict[str, str]],
-        opts=None,
-        meta: dict | None = None,
-    ) -> Iterator[str]:
-        raise LLMServiceError("provider unavailable")
-        yield ""  # pragma: no cover
+    request = httpx.Request("POST", estimator_ui.API_ESTIMATE_URL)
+    response = httpx.Response(500, text="internal error", request=request)
+    monkeypatch.setattr(
+        estimator_ui.httpx,
+        "post",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            httpx.HTTPStatusError("error", request=request, response=response)
+        ),
+    )
 
-    monkeypatch.setattr(llm_service, "stream_estimation", failing_stream)
+    loaded_app.text_area[0].set_value(VALID_DESCRIPTION)
+    loaded_app.button[0].click().run()
 
-    app = _load_app()
-    app.run()
-    app.chat_input[0].set_value(TRANSCRIPT).run()
+    assert loaded_app.error
+    assert "Estimation failed (500)" in loaded_app.error[0].value
 
-    assert not app.exception
-    assert any("Estimation failed" in error.value for error in app.error)
+
+def test_form_request_error(loaded_app: AppTest, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        estimator_ui.httpx,
+        "post",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            httpx.ConnectError("connection refused", request=MagicMock())
+        ),
+    )
+
+    loaded_app.text_area[0].set_value(VALID_DESCRIPTION)
+    loaded_app.button[0].click().run()
+
+    assert loaded_app.error
+    assert "Could not reach API" in loaded_app.error[0].value
+
+
+def test_form_invalid_api_response(
+    loaded_app: AppTest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    response = httpx.Response(
+        200,
+        json={"unexpected": "shape"},
+        request=httpx.Request("POST", estimator_ui.API_ESTIMATE_URL),
+    )
+    monkeypatch.setattr(estimator_ui.httpx, "post", lambda *args, **kwargs: response)
+
+    loaded_app.text_area[0].set_value(VALID_DESCRIPTION)
+    loaded_app.button[0].click().run()
+
+    assert loaded_app.error
+    assert "Invalid API response" in loaded_app.error[0].value
+
+
+def test_render_form_displays_persisted_estimation(openai_settings: None) -> None:
+    persisted = EstimationResponse(text="## Saved estimate", prompt_version="v1")
+    at = _load_app()
+    at.session_state["last_estimation"] = persisted
+    at.run()
+
+    assert any("Saved estimate" in block.value for block in at.markdown)
