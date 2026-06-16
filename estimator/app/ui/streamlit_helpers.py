@@ -1,62 +1,52 @@
-"""Pure helpers for the Streamlit chat UI — no Streamlit imports."""
+"""Pure helpers for the Streamlit form UI — no Streamlit imports.
 
-from app.context.examples import format_examples_for_prompt, select_examples
-from app.services.llm_service import GenerationOptions, build_system_prompt
+Session 4 replaced the chat-era helpers (``to_api_messages``, ``build_last_call``,
+``sidebar_system_prompt`` / ``sidebar_cag_context`` backed by ``build_system_prompt``)
+with a thin preview layer over ``render_estimation_prompt``. The form POSTs to the
+API via HTTP; these helpers only drive sidebar prompt previews and session defaults.
+"""
 
-ChatMessage = dict[str, str]
-LastCall = dict[str, str | int | None]
+from app.prompts.loader import render_estimation_prompt
+from app.schemas.request_form import (
+    DetailLevel,
+    EstimationRequest,
+    OutputFormat,
+    ProjectType,
+)
+
+# Keep in sync with estimations.PROMPT_VERSION and the loader default.
+PROMPT_VERSION = "v1"
+
+# Placeholder shown in the sidebar before the user submits the form for the first time.
+DEFAULT_PREVIEW_REQUEST = EstimationRequest(
+    description=(
+        "Submit the form with your project description to preview the exact "
+        "system and user prompts sent to the model."
+    ),
+    project_type=ProjectType.WEB_SAAS,
+    detail_level=DetailLevel.MEDIUM,
+    output_format=OutputFormat.PHASES_TABLE,
+)
 
 
-def default_generation_options() -> GenerationOptions:
-    """Return default GenerationOptions for a new chat session."""
-    return GenerationOptions()
-
-
-def initial_session_state() -> dict[str, list[ChatMessage] | LastCall | None]:
-    """Return the initial Streamlit session_state keys for the chat UI."""
+def initial_session_state() -> dict[str, EstimationRequest | None]:
+    """Return the initial Streamlit session_state keys for the form UI."""
     return {
-        "messages": [],
-        "last_call": None,
+        # Updated on valid form submit so sidebar previews match the last request.
+        "last_preview_request": None,
     }
 
 
-def to_api_messages(messages: list[ChatMessage]) -> list[dict[str, str]]:
-    """Convert chat history to the message list expected by stream_estimation."""
-    return [
-        {"role": message["role"], "content": message["content"]}
-        for message in messages
-        if message.get("role") in ("user", "assistant") and message.get("content")
-    ]
+def preview_request(
+    last_request: EstimationRequest | None,
+) -> EstimationRequest:
+    """Pick the request used for sidebar prompt previews."""
+    return last_request or DEFAULT_PREVIEW_REQUEST
 
 
-def build_last_call(meta: dict, latency_ms: int | None = None) -> LastCall:
-    """Build sidebar metrics from stream meta or a generate_estimation result."""
-    usage = meta.get("usage") or {}
-    return {
-        "model": meta.get("model", ""),
-        "provider": meta.get("provider", ""),
-        "input_tokens": usage.get("input_tokens", 0),
-        "output_tokens": usage.get("output_tokens", 0),
-        "latency_ms": latency_ms if latency_ms is not None else meta.get("latency_ms", 0),
-        "finish_reason": meta.get("finish_reason"),
-    }
-
-
-def sidebar_system_prompt(opts: GenerationOptions) -> str:
-    """Return the read-only system prompt shown in the sidebar."""
-    return build_system_prompt(
-        example_format=opts.example_format,
-        num_examples=opts.num_examples,
-        use_examples=opts.use_examples,
-        inline_cleaning=(opts.preprocessing == "inline_cleaning"),
-    )
-
-
-def sidebar_cag_context(opts: GenerationOptions) -> str:
-    """Return the read-only CAG examples block for the sidebar."""
-    if not opts.use_examples or opts.num_examples <= 0:
-        return ""
-    return format_examples_for_prompt(
-        select_examples(opts.num_examples),
-        opts.example_format,
-    )
+def sidebar_prompt_preview(
+    request: EstimationRequest,
+    version: str = PROMPT_VERSION,
+) -> tuple[str, str]:
+    """Render the system and user prompts shown in the sidebar."""
+    return render_estimation_prompt(request, version=version)
