@@ -93,3 +93,32 @@ def test_llm_service_error_returns_500(
     response = client.post("/api/v1/estimate", json=DEFAULT_PAYLOAD)
     assert response.status_code == 500
     assert response.json()["detail"] == "provider unavailable"
+
+
+def test_prompt_version_v2_uses_v2_templates(
+    client: TestClient, call_log: list[dict]
+) -> None:
+    response = client.post(
+        "/api/v1/estimate",
+        params={"prompt_version": "v2"},
+        json=DEFAULT_PAYLOAD,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["prompt_version"] == "v2"
+
+    system_msg = call_log[0]["messages"][0]["content"]
+    user_msg = call_log[0]["messages"][1]["content"]
+    assert "pragmatic technical delivery lead" in system_msg
+    assert "Reference deliveries" in system_msg
+    assert "## Client brief" in user_msg
+    assert "senior software consultant" not in system_msg
+
+
+def test_unknown_prompt_version_returns_422(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/estimate",
+        params={"prompt_version": "v99"},
+        json=DEFAULT_PAYLOAD,
+    )
+    assert response.status_code == 422
