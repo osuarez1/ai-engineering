@@ -1,10 +1,16 @@
 """Streamlit form interface for software project estimation.
 
-Replaces the previous chat UI: the client now collects structured input via
-st.form, validates it with the shared Pydantic schema (request_form.py), and
-calls the FastAPI service over HTTP instead of importing llm_service directly.
-This decouples the UI from the LLM layer so the API contract can evolve
-independently (e.g. structured responses in a later session).
+Session 4 changes (latest):
+- **Chat UI removed** — no ``stream_estimation``, no direct ``llm_service`` imports.
+- **Typed form** — ``st.form`` collects ``request_form.EstimationRequest`` fields
+  and POSTs to ``POST /api/v1/estimate`` via httpx.
+- **Sidebar** — CAG slider and legacy ``build_system_prompt`` previews replaced
+  with read-only Jinja renders (``render_estimation_prompt`` via helpers).
+- **Session state** — ``last_preview_request`` feeds the sidebar; ``last_estimation``
+  persists the API response across reruns.
+
+The UI stays decoupled from the LLM layer: only the API contract and prompt
+templates need to change when estimation logic evolves.
 """
 
 from enum import Enum
@@ -41,7 +47,7 @@ def bootstrap() -> Settings:
     st.title("Software Estimator")
     st.caption(
         "Describe your project below to generate a software estimation "
-        "using Cache Augmented Generation (CAG)."
+        "using versioned Jinja2 prompts."
     )
 
     try:
@@ -58,11 +64,8 @@ def bootstrap() -> Settings:
         if key not in st.session_state:
             st.session_state[key] = value
 
-    if "opts" not in st.session_state:
-        st.session_state.opts = streamlit_helpers.default_generation_options()
-
-    # Persist the last API response across reruns (e.g. when the sidebar slider
-    # triggers a rerun) so the estimation text does not disappear from the page.
+    # API response persisted outside the form so reruns (e.g. sidebar expand) do
+    # not clear the rendered estimation.
     if "last_estimation" not in st.session_state:
         st.session_state.last_estimation = None
 
@@ -70,51 +73,36 @@ def bootstrap() -> Settings:
 
 
 def render_sidebar(settings: Settings) -> None:
-    """Render the sidebar configuration panel and update session opts in place."""
+    """Render the sidebar configuration panel and Jinja prompt previews."""
     with st.sidebar:
         st.header("Configuration")
         st.text_input("Provider", value=settings.LLM_PROVIDER, disabled=True)
         st.text_input("Model", value=settings.LLM_MODEL, disabled=True)
-        st.session_state.opts.num_examples = st.slider(
-            "CAG examples",
-            min_value=0,
-            max_value=5,
-            value=st.session_state.opts.num_examples,
+
+        # Preview uses the last submitted request, or a placeholder until first submit.
+        # Form widget values are not readable outside st.form on partial reruns.
+        preview_request = streamlit_helpers.preview_request(
+            st.session_state.last_preview_request,
         )
+        system_prompt, user_prompt = streamlit_helpers.sidebar_prompt_preview(preview_request)
 
         with st.expander("System prompt", expanded=False):
             st.text_area(
                 "System prompt",
-                value=streamlit_helpers.sidebar_system_prompt(st.session_state.opts),
+                value=system_prompt,
                 height=300,
                 disabled=True,
                 label_visibility="collapsed",
             )
 
-        with st.expander("CAG examples", expanded=False):
+        with st.expander("User prompt", expanded=False):
             st.text_area(
-                "CAG examples",
-                value=streamlit_helpers.sidebar_cag_context(st.session_state.opts),
-                height=300,
+                "User prompt",
+                value=user_prompt,
+                height=200,
                 disabled=True,
                 label_visibility="collapsed",
             )
-
-        _render_last_call_metrics()
-
-
-def _render_last_call_metrics() -> None:
-    st.subheader("Last call")
-    if not st.session_state.last_call:
-        st.caption("No estimation calls yet.")
-        return
-
-    last_call = st.session_state.last_call
-    st.text_input("Call model", value=str(last_call.get("model", "")), disabled=True)
-    col_in, col_out = st.columns(2)
-    col_in.metric("Input tokens", last_call.get("input_tokens", 0))
-    col_out.metric("Output tokens", last_call.get("output_tokens", 0))
-    st.metric("Latency (ms)", last_call.get("latency_ms", 0))
 
 
 def render_form() -> None:
@@ -148,8 +136,7 @@ def render_form() -> None:
         submitted = st.form_submit_button("Estimate")
 
     if submitted:
-        # Pydantic validates min/max length and required fields before any HTTP
-        # call — same rules the API will enforce once it adopts this schema.
+        # Client-side validation mirrors the API — fail fast before httpx.post.
         try:
             request = EstimationRequest(
                 description=description,
@@ -162,6 +149,9 @@ def render_form() -> None:
                 loc = " → ".join(str(part) for part in err["loc"])
                 st.error(f"**{loc}:** {err['msg']}")
             return
+
+        # Update sidebar previews even if the API call fails later.
+        st.session_state.last_preview_request = request
 
         with st.spinner("Generating estimation..."):
             try:
@@ -181,8 +171,6 @@ def render_form() -> None:
                 st.error(f"**Could not reach API:** {exc}")
                 return
 
-        # Response is free-form text for now; EstimationResponse will gain
-        # structured fields in a later session once the API contract matures.
         try:
             result = EstimationResponse.model_validate(response.json())
         except ValidationError as exc:
