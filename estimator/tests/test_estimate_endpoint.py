@@ -3,15 +3,19 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-from app.context.examples import CANONICAL_EXAMPLES
 from app.services import llm_service
 
-WELL_FORMED_MD = CANONICAL_EXAMPLES[0].estimation_markdown
+ESTIMATION_TEXT = "## Project estimate\n\nTotal: 120 hours · 7,500 EUR"
+
+DEFAULT_PAYLOAD = {
+    "description": "We need a small CRM with auth, contacts and roles. MVP in six weeks.",
+    "project_type": "web_saas",
+    "detail_level": "medium",
+    "output_format": "phases_table",
+}
 
 
-def _fake_openai_response(
-    *, estimation: str = WELL_FORMED_MD, finish_reason: str = "stop"
-) -> dict:
+def _fake_openai_response(*, estimation: str = ESTIMATION_TEXT, finish_reason: str = "stop") -> dict:
     return {
         "estimation": estimation,
         "model": "gpt-4o-mini",
@@ -28,97 +32,64 @@ def call_log(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[dict]]:
 
     def fake(messages: list[dict], model: str, max_tokens: int) -> dict:
         calls.append({"messages": messages, "model": model, "max_tokens": max_tokens})
-        # Mirror the real wrapper's behavior: low max_tokens -> length finish_reason
-        finish_reason = "length" if max_tokens <= 200 else "stop"
-        return _fake_openai_response(finish_reason=finish_reason)
+        return _fake_openai_response()
 
     monkeypatch.setattr(llm_service, "_call_openai", fake)
     yield calls
 
 
-def test_default_request_returns_validation(client: TestClient, call_log: list[dict]) -> None:
-    payload = {"transcription": "We need a small CRM with auth, contacts and roles. MVP six weeks."}
-    response = client.post("/api/v1/estimate", json=payload)
+def test_default_request_returns_text_and_prompt_version(
+    client: TestClient, call_log: list[dict]
+) -> None:
+    response = client.post("/api/v1/estimate", json=DEFAULT_PAYLOAD)
     assert response.status_code == 200
     body = response.json()
-    assert body["preprocessing"] == "none"
-    assert body["finish_reason"] == "stop"
-    assert body["validation"] is not None
-    assert body["validation"]["score"] == 1.0
-    assert body["extracted_requirements"] is None
+    assert body["text"] == ESTIMATION_TEXT
+    assert body["prompt_version"] == "v1"
     assert len(call_log) == 1
 
 
-def test_two_phase_invokes_llm_twice_and_fills_extracted(
+def test_llm_receives_separate_system_and_user_messages(
     client: TestClient, call_log: list[dict]
 ) -> None:
-    payload = {
-        "transcription": "We need a small CRM with auth, contacts and roles. MVP six weeks.",
-        "preprocessing": "two_phase",
-    }
+    response = client.post("/api/v1/estimate", json=DEFAULT_PAYLOAD)
+    assert response.status_code == 200
+
+    messages = call_log[0]["messages"]
+    assert len(messages) == 2
+    assert messages[0]["role"] == "system"
+    assert messages[1]["role"] == "user"
+    assert "senior software consultant" in messages[0]["content"]
+    assert DEFAULT_PAYLOAD["description"] in messages[1]["content"]
+    assert DEFAULT_PAYLOAD["description"] not in messages[0]["content"]
+
+
+def test_output_format_affects_system_prompt(client: TestClient, call_log: list[dict]) -> None:
+    payload = {**DEFAULT_PAYLOAD, "output_format": "narrative"}
     response = client.post("/api/v1/estimate", json=payload)
     assert response.status_code == 200
-    body = response.json()
-    assert body["preprocessing"] == "two_phase"
-    assert body["extracted_requirements"] is not None
-    assert len(call_log) == 2
-    # The second call's user message should be the extracted requirements,
-    # not the original transcription.
-    second_user_msg = call_log[1]["messages"][-1]["content"]
-    assert second_user_msg == body["extracted_requirements"]
 
-
-def test_max_tokens_low_propagates_finish_reason_length(
-    client: TestClient, call_log: list[dict]
-) -> None:
-    payload = {
-        "transcription": "We need a small CRM with auth, contacts and roles. MVP six weeks.",
-        "max_tokens": 200,
-    }
-    response = client.post("/api/v1/estimate", json=payload)
-    assert response.status_code == 200
-    body = response.json()
-    assert body["finish_reason"] == "length"
-    assert body["validation"]["finish_reason_ok"] is False
-    assert any("truncated" in m.lower() for m in body["validation"]["issues"])
-
-
-def test_example_format_json_returns_200(client: TestClient, call_log: list[dict]) -> None:
-    payload = {
-        "transcription": "We need a small CRM with auth, contacts and roles. MVP six weeks.",
-        "example_format": "json",
-        "num_examples": 2,
-    }
-    response = client.post("/api/v1/estimate", json=payload)
-    assert response.status_code == 200
-    body = response.json()
-    assert body["usage"]["input_tokens"] > 0
-    # The system message sent to OpenAI should contain the JSON examples block
     system_msg = call_log[0]["messages"][0]["content"]
-    assert "Reference examples (JSON):" in system_msg
+    assert "connected prose" in system_msg
 
 
-def test_model_override_is_passed_to_provider(
-    client: TestClient, call_log: list[dict]
-) -> None:
-    payload = {
-        "transcription": "We need a small CRM with auth, contacts and roles. MVP six weeks.",
-        "model": "gpt-4o",
-    }
+def test_description_too_short_returns_422(client: TestClient) -> None:
+    payload = {**DEFAULT_PAYLOAD, "description": "too short"}
     response = client.post("/api/v1/estimate", json=payload)
-    assert response.status_code == 200
-    assert call_log[0]["model"] == "gpt-4o"
+    assert response.status_code == 422
 
 
-def test_use_examples_false_omits_examples_block(
-    client: TestClient, call_log: list[dict]
+def test_llm_service_error_returns_500(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    payload = {
-        "transcription": "We need a small CRM with auth, contacts and roles. MVP six weeks.",
-        "use_examples": False,
-    }
-    response = client.post("/api/v1/estimate", json=payload)
-    assert response.status_code == 200
-    system_msg = call_log[0]["messages"][0]["content"]
-    assert "EXAMPLE 1" not in system_msg
-    assert "Reference examples" not in system_msg
+    def boom(*args, **kwargs):
+        raise llm_service.LLMServiceError("provider unavailable")
+
+    monkeypatch.setattr(
+        "app.routers.estimations.generate_estimation_from_request",
+        boom,
+    )
+
+    response = client.post("/api/v1/estimate", json=DEFAULT_PAYLOAD)
+    assert response.status_code == 500
+    assert response.json()["detail"] == "provider unavailable"
