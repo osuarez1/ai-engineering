@@ -6,6 +6,8 @@ Session 4 changes (latest):
   and POSTs to ``POST /api/v1/estimate`` via httpx.
 - **Sidebar** — CAG slider and legacy ``build_system_prompt`` previews replaced
   with read-only Jinja renders (``render_estimation_prompt`` via helpers).
+- **Prompt versioning** — sidebar radio selects v1 or v2; previews and API calls
+  both use ``?prompt_version=`` for live A/B comparison of template sets.
 - **Session state** — ``last_preview_request`` feeds the sidebar; ``last_estimation``
   persists the API response across reruns.
 
@@ -78,13 +80,26 @@ def render_sidebar(settings: Settings) -> None:
         st.header("Configuration")
         st.text_input("Provider", value=settings.LLM_PROVIDER, disabled=True)
         st.text_input("Model", value=settings.LLM_MODEL, disabled=True)
+        # Outside the form so switching version updates sidebar previews immediately
+        # without requiring a new Estimate submit.
+        st.radio(
+            "Prompt version",
+            options=list(streamlit_helpers.SUPPORTED_PROMPT_VERSIONS),
+            key="prompt_version",
+            horizontal=True,
+            help="Selects the Jinja template set sent to the API (?prompt_version=).",
+        )
 
         # Preview uses the last submitted request, or a placeholder until first submit.
         # Form widget values are not readable outside st.form on partial reruns.
         preview_request = streamlit_helpers.preview_request(
             st.session_state.last_preview_request,
         )
-        system_prompt, user_prompt = streamlit_helpers.sidebar_prompt_preview(preview_request)
+        # Render with the sidebar selection — same version the next POST will request.
+        system_prompt, user_prompt = streamlit_helpers.sidebar_prompt_preview(
+            preview_request,
+            version=st.session_state.prompt_version,
+        )
 
         with st.expander("System prompt", expanded=False):
             st.text_area(
@@ -159,6 +174,8 @@ def render_form() -> None:
                 # "web_saas") so the payload matches the API JSON contract.
                 response = httpx.post(
                     API_ESTIMATE_URL,
+                    # Query param mirrors estimations.create_estimation prompt_version.
+                    params={"prompt_version": st.session_state.prompt_version},
                     json=request.model_dump(mode="json"),
                     timeout=120.0,
                 )
@@ -182,6 +199,7 @@ def render_form() -> None:
     # Render outside the submit branch so the result survives sidebar reruns.
     if st.session_state.last_estimation is not None:
         result: EstimationResponse = st.session_state.last_estimation
+        # Echo the version the API actually used (may differ if the API default changes).
         st.caption(f"Prompt version: {result.prompt_version}")
         st.markdown(result.text)
 
