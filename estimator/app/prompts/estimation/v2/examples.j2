@@ -1,0 +1,151 @@
+{% if output_format == "phases_table" and detail_level == "summary" %}
+### Example 1 — Startup MVP Landing Page
+
+**Scope:** Single-page marketing site with waitlist form, responsive layout, and Plausible
+analytics. No CMS; copy provided by the client.
+
+**Totals:** 48 hours · 2,900 EUR · Team: 1 full-stack dev, designer (2 days) ·
+Duration: 2 weeks
+
+---
+
+### Example 2 — GitHub-to-Slack Deploy Notifier
+
+**Scope:** Webhook listener that posts release notes to a Slack channel when a GitHub
+Action completes. Includes secret rotation and retry logic.
+
+**Totals:** 64 hours · 4,000 EUR · Team: 1 backend developer · Duration: 3 weeks
+
+{% elif output_format == "phases_table" and detail_level == "medium" %}
+### Example 1 — Courier Dispatch Mobile App
+
+**Scope:** Driver app for same-day couriers: route list, proof-of-delivery photos, GPS
+check-in, and offline queue. Ops dashboard for dispatchers (read-only v1).
+
+#### Phase 1 — Shaping
+
+| Task | Hours | Cost (EUR) |
+|------|------:|-----------:|
+| Field interviews and flow mapping | 10 | 625 |
+| Mobile UI kit (6 screens) | 20 | 1,000 |
+
+#### Phase 2 — Build
+
+| Task | Hours | Cost (EUR) |
+|------|------:|-----------:|
+| Offline route sync | 36 | 2,250 |
+| POD capture and upload | 24 | 1,500 |
+| Dispatcher dashboard (MVP) | 20 | 1,250 |
+
+#### Phase 3 — Ship
+
+| Task | Hours | Cost (EUR) |
+|------|------:|-----------:|
+| Device QA and pilot rollout | 24 | 1,500 |
+
+**Totals:** 134 hours · 8,125 EUR · Team: 1 mobile lead, 1 designer (part-time) ·
+Duration: 8 weeks
+
+{% elif output_format == "phases_table" and detail_level == "detailed" %}
+### Example 1 — Procurement Workflow Portal
+
+**Scope:** Internal portal for purchase requests: multi-step approvals, budget caps,
+vendor directory, and export to the finance ERP. Azure AD SSO.
+
+#### Phase 1 — Discovery
+
+| Task | Hours | Cost (EUR) |
+|------|------:|-----------:|
+| Process mapping workshops | 16 | 1,000 |
+| UX flows and component library | 24 | 1,200 |
+| Integration spike (ERP API) | 12 | 750 |
+
+#### Phase 2 — Core workflows
+
+| Task | Hours | Cost (EUR) |
+|------|------:|-----------:|
+| Request intake and routing engine | 40 | 2,500 |
+| Approval chains and notifications | 32 | 2,000 |
+| Vendor management module | 24 | 1,500 |
+
+#### Phase 3 — Compliance and launch
+
+| Task | Hours | Cost (EUR) |
+|------|------:|-----------:|
+| Audit trail and reporting | 20 | 1,250 |
+| Security review and UAT | 28 | 1,750 |
+
+**Totals:** 196 hours · 12,200 EUR · Team: 2 backend devs, 1 frontend, 1 designer ·
+Duration: 14 weeks
+
+{% elif output_format == "line_items" and detail_level == "summary" %}
+### Example 1 — Webhook Health Monitor
+
+**Scope:** Cron job plus dashboard that pings customer webhook URLs and alerts on
+failures. Single-tenant admin UI.
+
+**Totals:** 52 hours · 3,250 EUR · Team: 1 backend developer · Duration: 3 weeks
+
+{% elif output_format == "line_items" and detail_level == "medium" %}
+### Example 1 — Restaurant Reservation API
+
+**Scope:** REST API for table holds, party size, and SMS confirmations. Postgres backing
+store; OpenAPI spec for partner integrations.
+
+1. **Schema and availability engine** — 32 h · 2,000 EUR — slot rules and blackout dates.
+2. **Booking endpoints and idempotency** — 28 h · 1,750 EUR — create, amend, cancel.
+3. **Twilio SMS hooks** — 16 h · 1,000 EUR — confirmation and reminder texts.
+4. **Partner docs and staging environment** — 12 h · 750 EUR — OpenAPI + seed data.
+
+**Totals:** 88 hours · 5,500 EUR · Team: 1 API engineer · Duration: 5 weeks
+
+{% elif output_format == "line_items" and detail_level == "detailed" %}
+### Example 1 — Multi-tenant Audit Log Service
+
+**Scope:** Centralised audit ingestion API with tenant isolation, retention policies, and
+SIEM export. SOC2-friendly access controls.
+
+1. **Tenant model and authZ** — 40 h · 2,500 EUR — org boundaries and API keys.
+2. **Ingestion pipeline (Kafka → store)** — 48 h · 3,000 EUR — ordering and back-pressure.
+3. **Query API and pagination** — 32 h · 2,000 EUR — filter by actor, resource, time.
+4. **Retention jobs and export adapters** — 24 h · 1,500 EUR — S3 archive + Splunk HEC.
+5. **Load testing and runbooks** — 20 h · 1,250 EUR — capacity baseline and on-call docs.
+
+**Totals:** 164 hours · 10,250 EUR · Team: 2 senior backend engineers · Duration: 10 weeks
+
+{% elif output_format == "narrative" and detail_level == "summary" %}
+### Example 1 — Personal Finance Tracker PWA
+
+**Scope:** Installable PWA that imports bank CSVs, tags transactions, and shows monthly
+burn. No open-banking integrations in v1.
+
+The build centres on a secure client-side parser and a simple dashboard. We scoped
+**60 hours · 3,750 EUR** with one full-stack developer over **3 weeks**, assuming
+provided categorisation rules and no multi-currency support.
+
+{% elif output_format == "narrative" and detail_level == "medium" %}
+### Example 1 — B2B Referral Program Platform
+
+**Scope:** Partners generate tracked links, earn commissions on qualified sign-ups, and
+withdraw via Stripe Connect. Admin console for fraud review.
+
+Discovery and schema design take the first two weeks, followed by referral attribution
+logic and the partner portal. Payout automation and admin tooling close the build.
+**Totals:** 152 hours · 9,500 EUR · Team: 1 full-stack lead, 1 frontend contractor ·
+Duration: 9 weeks. Main risk: payment compliance review may add calendar time.
+
+{% elif output_format == "narrative" and detail_level == "detailed" %}
+### Example 1 — Clinical Trial Site Portal
+
+**Scope:** Sites enrol patients, upload protocol deviations, and message monitors.
+21 CFR Part 11 considerations; role-based access per study arm.
+
+The programme splits into compliance-heavy foundations (identity, e-signatures, audit
+logs), study workflows (enrolment, visit scheduling, document uploads), and monitor
+collaboration (threaded messaging, escalation rules). Integration with the sponsor CTMS
+is the longest pole. We budget **320 hours · 20,000 EUR** across **two full-stack
+developers, a compliance consultant (advisory), and a QA lead in the final month** over
+**18 weeks**. Assumptions include a stable CTMS sandbox; regulatory validation is out
+of scope for this estimate.
+
+{% endif %}
