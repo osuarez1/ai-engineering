@@ -6,6 +6,7 @@ and few-shot examples. Renders via ``render_estimation_prompt`` only — no LLM 
 
 import pytest
 
+from app.prompts.examples_catalog import resolve_reference_projects
 from app.prompts.loader import render_estimation_prompt
 from app.schemas.request_form import (
     DetailLevel,
@@ -49,6 +50,7 @@ def _request(
     project_type: ProjectType = ProjectType.WEB_SAAS,
     output_format: OutputFormat = OutputFormat.PHASES_TABLE,
     detail_level: DetailLevel = DetailLevel.MEDIUM,
+    reference_projects: list | None = None,
 ) -> EstimationRequest:
     """Build a valid EstimationRequest, overriding only the fields a test cares about."""
     return EstimationRequest(
@@ -56,6 +58,28 @@ def _request(
         project_type=project_type,
         detail_level=detail_level,
         output_format=output_format,
+        reference_projects=reference_projects,
+    )
+
+
+def _request_with_resolved_reference_projects(
+    *,
+    description: str = _UNIQUE_DESCRIPTION,
+    project_type: ProjectType = ProjectType.INTERNAL_TOOL,
+    output_format: OutputFormat = OutputFormat.PHASES_TABLE,
+    detail_level: DetailLevel = DetailLevel.SUMMARY,
+) -> EstimationRequest:
+    return _request(
+        description=description,
+        project_type=project_type,
+        output_format=output_format,
+        detail_level=detail_level,
+        reference_projects=resolve_reference_projects(
+            version=PROMPT_VERSION,
+            project_type=project_type,
+            output_format=output_format,
+            detail_level=detail_level,
+        ),
     )
 
 
@@ -279,3 +303,49 @@ def test_user_prompt_renders_description_literals_unchanged(description: str) ->
     )
 
     assert description in user
+
+
+# ---------------------------------------------------------------------------
+# Reference projects (reference_projects.j2) — dynamic similar-project context
+# ---------------------------------------------------------------------------
+
+
+def test_v2_reference_projects_renders_similar_completed_projects_section() -> None:
+    request = _request_with_resolved_reference_projects()
+    system, _ = render_estimation_prompt(request, version=PROMPT_VERSION)
+
+    assert "Similar completed projects" in system
+    assert "Procurement Workflow Portal" in system
+    assert "Reference deliveries" not in system
+
+
+def test_v2_reference_projects_excludes_active_few_shot_titles() -> None:
+    request = _request_with_resolved_reference_projects()
+    system, _ = render_estimation_prompt(request, version=PROMPT_VERSION)
+
+    assert "GitHub-to-Slack Deploy Notifier" not in system
+    assert "Startup MVP Landing Page" not in system
+
+
+def test_v2_reference_projects_includes_scope_and_body() -> None:
+    request = _request_with_resolved_reference_projects()
+    system, _ = render_estimation_prompt(request, version=PROMPT_VERSION)
+
+    assert "purchase requests" in system
+    assert "Request intake and routing engine" in system
+
+
+def test_v2_reference_projects_none_uses_static_examples() -> None:
+    system, _ = render_estimation_prompt(_request(reference_projects=None), version=PROMPT_VERSION)
+
+    assert "Reference deliveries" in system
+    assert "Courier Dispatch Mobile App" in system
+    assert "Similar completed projects" not in system
+
+
+def test_v2_empty_reference_projects_falls_back_to_static_examples() -> None:
+    system, _ = render_estimation_prompt(_request(reference_projects=[]), version=PROMPT_VERSION)
+
+    assert "Reference deliveries" in system
+    assert "Courier Dispatch Mobile App" in system
+    assert "Similar completed projects" not in system
