@@ -40,6 +40,7 @@ cp .env.example .env
 | `GEMINI_API_KEY` | Clave Google Gemini (requerida si `LLM_PROVIDER=gemini`) |
 | `APP_ENV` | Entorno: `development`, `staging` o `production` |
 | `LOG_LEVEL` | Nivel de log: `DEBUG`, `INFO`, `WARNING` o `ERROR` |
+| `MAX_CONVERSATION_TURNS` | Pares user/assistant conservados en memoria por sesion (default: `6`) |
 
 `.env.example` usa `openai` por defecto; si no hay archivo `.env`, `app/config.py` cae en `anthropic` / `claude-haiku-4-5`.
 
@@ -86,6 +87,56 @@ uv run streamlit run streamlit_app.py
 ```
 
 Abre `http://localhost:8501`. La barra lateral muestra proveedor y modelo (solo lectura), selector de version de prompt (`v1` / `v2`) y vistas previas del system/user prompt renderizados con Jinja. El formulario POSTea a `http://localhost:8000/api/v1/estimate?prompt_version=...` usando los mismos modelos Pydantic que la API.
+
+## Sesiones conversacionales (Session 05)
+
+El servicio soporta estimacion multi-turno con memoria en proceso y documentos adjuntos.
+
+### Endpoints
+
+| Metodo | Ruta | Descripcion |
+|--------|------|-------------|
+| `POST` | `/sessions` | Crea una sesion vacia; devuelve `{"session_id": "..."}` |
+| `POST` | `/sessions/{session_id}/estimate` | Estima con `multipart/form-data` (`transcript` + `attachments` opcionales) |
+
+Las sesiones viven en un diccionario en memoria del proceso: se pierden al reiniciar el servicio y no se comparten entre workers.
+
+Ejemplo con transcript y adjunto:
+
+```bash
+SESSION_ID=$(curl -s -X POST http://localhost:8000/sessions | jq -r .session_id)
+
+curl -X POST "http://localhost:8000/sessions/${SESSION_ID}/estimate?prompt_version=v2" \
+  -F "transcript=We need a CRM with auth, contacts and roles. MVP in six weeks." \
+  -F "attachments=@spec.docx"
+```
+
+**Respuesta** (`SessionEstimationResponse`):
+
+```json
+{
+  "text": "...",
+  "prompt_version": "v2",
+  "project_metadata": {
+    "project_name": null,
+    "assumed_team_size": null,
+    "mentioned_technologies": [],
+    "agreed_scope": null
+  }
+}
+```
+
+### Adjuntos: Path B (extraccion local)
+
+Implementamos **Path B** — extraccion de texto en el servicio AI con `pypdf` (PDF) y `python-docx` (Word), concatenada al transcript con el separador `=== attachment: filename ===`.
+
+**Por que Path B y no multimodal directo (Path A):**
+
+- **Independencia de proveedor** — el wrapper LLM sigue funcionando con OpenAI, Anthropic o Gemini sin Files API.
+- **Control y testabilidad** — el texto extraido es inspectable y mockeable en tests.
+- **Preparacion para RAG** — la misma logica de extraccion es el primer paso del pipeline de chunking del modulo 3.
+
+Path A (subir el PDF al proveedor multimodal) es valido cuando la velocidad de desarrollo prima y se acepta acoplamiento al proveedor; para este ejercicio elegimos Path B.
 
 ## Probar el servicio
 
@@ -152,8 +203,13 @@ estimator/
 │   ├── main.py                    # FastAPI, CORS, GET /health
 │   ├── config.py                  # Pydantic Settings
 │   ├── routers/estimations.py     # POST /api/v1/estimate
+│   ├── routers/sessions.py        # POST /sessions, POST /sessions/{id}/estimate
 │   ├── schemas/request_form.py    # EstimationRequest / EstimationResponse
+│   ├── schemas/session.py         # SessionCreateResponse / SessionEstimationResponse
 │   ├── services/llm_service.py    # generate_estimation_from_request (3 proveedores)
+│   ├── services/attachments.py    # Extraccion local PDF/DOCX (Path B)
+│   ├── services/session_estimation.py
+│   ├── sessions.py                # ConversationHistory, ProjectMetadata, SessionStore
 │   ├── prompts/
 │   │   ├── loader.py              # render_estimation_prompt()
 │   │   └── estimation/v1|v2/      # system.j2, user.j2, examples.j2
