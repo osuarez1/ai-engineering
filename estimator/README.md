@@ -152,6 +152,8 @@ Un extractor LLM (segunda llamada con prompt estructurado) es mas robusto ante v
 
 El bloque `<project_metadata>` se inyecta en el system prompt via `_project_metadata.j2` (v1 y v2) y se regenera en cada llamada junto con el sliding window de historial.
 
+Flujo detallado del pipeline multi-turno (`build_session_messages` → `cap_outgoing_messages` → `generate_estimation_from_messages` → proveedor): ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Probar el servicio
 
 Health check:
@@ -220,7 +222,7 @@ estimator/
 │   ├── routers/sessions.py        # POST /sessions, POST /sessions/{id}/estimate
 │   ├── schemas/request_form.py    # EstimationRequest / EstimationResponse
 │   ├── schemas/session.py         # SessionCreateResponse / SessionEstimationResponse
-│   ├── services/llm_service.py    # generate_estimation_from_request (3 proveedores)
+│   ├── services/llm_service.py    # generate_estimation_from_messages, 3 proveedores
 │   ├── services/attachments.py    # Extraccion local PDF/DOCX (Path B)
 │   ├── services/metadata_extractor.py  # Heuristica post-turno para project_metadata
 │   ├── services/session_estimation.py
@@ -230,6 +232,7 @@ estimator/
 │   │   └── estimation/v1|v2/      # system.j2, user.j2, examples.j2
 │   ├── ui/streamlit_helpers.py    # Helpers puros para sidebar/previews
 │   └── fixtures/                  # Transcripciones de ejemplo (solo fixtures)
+├── docs/ARCHITECTURE.md           # Flujos de arquitectura (form vs sesion multi-turno)
 ├── streamlit_app.py               # UI formulario (cliente HTTP)
 ├── tests/                         # pytest + AppTest
 ├── Dockerfile                     # Build multi-stage con uv

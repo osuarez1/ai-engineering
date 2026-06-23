@@ -29,5 +29,6 @@ htmlcov/
 .idea/
 .vscode/
 
-# Session guides / docs
-docs/
+# Session guides / docs (architecture doc is tracked)
+docs/*
+!docs/ARCHITECTURE.md
