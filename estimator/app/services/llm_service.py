@@ -12,8 +12,13 @@ from dataclasses import dataclass
 import structlog
 
 from app.config import get_settings
-from app.prompts.loader import render_estimation_prompt
+from app.prompts.loader import (
+    render_estimation_prompt,
+    render_session_system_prompt,
+    render_session_user_prompt,
+)
 from app.schemas.request_form import EstimationRequest
+from app.sessions import ProjectMetadata
 
 log = structlog.get_logger()
 
@@ -106,6 +111,86 @@ def generate_estimation_from_request(
         raise LLMServiceError(f"LLM call failed: {exc}") from exc
 
     # Map provider wrapper key ("estimation") to the form API contract ("text").
+    return {
+        "text": result["estimation"],
+        "prompt_version": version,
+        "model": result["model"],
+        "provider": result["provider"],
+        "usage": result["usage"],
+        "finish_reason": result["finish_reason"],
+        "latency_ms": int((time.perf_counter() - t0) * 1000),
+    }
+
+
+def generate_session_estimation(
+    request: EstimationRequest,
+    project_metadata: ProjectMetadata,
+    *,
+    version: str = "v2",
+    opts: GenerationOptions | None = None,
+) -> dict:
+    """Generate an estimation for a conversational session turn.
+
+    The system prompt includes the session's ``project_metadata`` facts.
+    """
+    opts = opts or GenerationOptions()
+    settings = get_settings()
+    t0 = time.perf_counter()
+
+    system_prompt = render_session_system_prompt(request, project_metadata, version=version)
+    user_input = render_session_user_prompt(request, version=version)
+    model = opts.model or settings.LLM_MODEL
+
+    log.info(
+        "generating_session_estimation",
+        provider=settings.LLM_PROVIDER,
+        model=model,
+        prompt_version=version,
+        project_type=request.project_type.value,
+        detail_level=request.detail_level.value,
+        output_format=request.output_format.value,
+        max_tokens=opts.max_tokens,
+        thinking_budget=opts.thinking_budget,
+        has_project_metadata=bool(project_metadata.model_dump(exclude_none=True)),
+    )
+
+    try:
+        if settings.LLM_PROVIDER == "openai":
+            if opts.thinking_budget is not None:
+                log.warning("thinking_budget_ignored_for_provider", provider="openai")
+            result = _call_openai(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_input},
+                ],
+                model=model,
+                max_tokens=opts.max_tokens,
+            )
+        elif settings.LLM_PROVIDER == "anthropic":
+            result = _call_anthropic(
+                system=system_prompt,
+                user_message=user_input,
+                model=model,
+                max_tokens=opts.max_tokens,
+                thinking_budget=opts.thinking_budget,
+            )
+        elif settings.LLM_PROVIDER == "gemini":
+            if opts.thinking_budget is not None:
+                log.warning("thinking_budget_ignored_for_provider", provider="gemini")
+            result = _call_gemini(
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_input}],
+                model=model,
+                max_tokens=opts.max_tokens,
+            )
+        else:
+            raise LLMServiceError(f"Unsupported LLM_PROVIDER: {settings.LLM_PROVIDER}")
+    except LLMServiceError:
+        raise
+    except Exception as exc:
+        log.error("llm_call_failed", error=str(exc), provider=settings.LLM_PROVIDER)
+        raise LLMServiceError(f"LLM call failed: {exc}") from exc
+
     return {
         "text": result["estimation"],
         "prompt_version": version,
