@@ -19,6 +19,7 @@ from app.services.llm_service import (
     _gemini_usage_dict,
     _normalize_gemini_finish_reason,
     _to_gemini_contents,
+    generate_estimation_from_messages,
     generate_estimation_from_request,
     generate_session_estimation,
 )
@@ -355,6 +356,70 @@ def test_call_anthropic_multiturn(monkeypatch: pytest.MonkeyPatch, anthropic_set
     sent_messages = mock_client.messages.create.call_args.kwargs["messages"]
     assert len(sent_messages) == 3
     assert result["estimation"] == ESTIMATION_TEXT
+
+
+def test_generate_estimation_from_messages_multiturn_openai(
+    monkeypatch: pytest.MonkeyPatch, openai_settings: None
+) -> None:
+    captured: list[list[dict]] = []
+
+    def fake_openai(messages, model, max_tokens):
+        captured.append(messages)
+        return _provider_result("openai")
+
+    monkeypatch.setattr(llm_service, "_call_openai", fake_openai)
+
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "turn 1"},
+        {"role": "assistant", "content": "reply 1"},
+        {"role": "user", "content": "turn 2"},
+    ]
+    result = generate_estimation_from_messages(messages, version="v2")
+
+    assert result["provider"] == "openai"
+    assert len(captured[0]) == 4
+
+
+def test_generate_estimation_from_messages_requires_system_message(
+    openai_settings: None,
+) -> None:
+    with pytest.raises(LLMServiceError, match="messages must start with a system role"):
+        generate_estimation_from_messages([{"role": "user", "content": "hi"}])
+
+
+def test_generate_estimation_from_messages_unsupported_provider_raises(
+    monkeypatch: pytest.MonkeyPatch, openai_settings: None
+) -> None:
+    settings = SimpleNamespace(
+        LLM_PROVIDER="unsupported",
+        LLM_MODEL="test-model",
+        OPENAI_API_KEY="sk-test",
+    )
+    monkeypatch.setattr(llm_service, "get_settings", lambda: settings)
+
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "turn"},
+    ]
+    with pytest.raises(LLMServiceError, match="Unsupported LLM_PROVIDER"):
+        generate_estimation_from_messages(messages)
+
+
+def test_generate_estimation_from_messages_generic_exception_wrapped(
+    monkeypatch: pytest.MonkeyPatch, openai_settings: None
+) -> None:
+    def boom(*args, **kwargs):
+        raise RuntimeError("network timeout")
+
+    monkeypatch.setattr(llm_service, "_call_openai", boom)
+
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "turn"},
+    ]
+    with pytest.raises(LLMServiceError, match="LLM call failed: network timeout"):
+        generate_estimation_from_messages(messages)
 
 
 def test_call_gemini(monkeypatch: pytest.MonkeyPatch, gemini_settings: None) -> None:
