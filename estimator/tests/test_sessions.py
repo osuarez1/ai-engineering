@@ -53,6 +53,32 @@ def test_conversation_history_sliding_window(
     get_settings.cache_clear()
 
 
+def test_conversation_history_keeps_all_pairs_at_exact_window_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MAX_CONVERSATION_TURNS", "2")
+    get_settings.cache_clear()
+
+    history = ConversationHistory()
+    history.add_turn("turn 1", "reply 1")
+    history.add_turn("turn 2", "reply 2")
+
+    assert [message.content for message in history.messages] == [
+        "turn 1",
+        "reply 1",
+        "turn 2",
+        "reply 2",
+    ]
+
+    get_settings.cache_clear()
+
+
+def test_conversation_history_to_messages_list_without_prior_turns() -> None:
+    history = ConversationHistory()
+    messages = history.to_messages_list("system context")
+    assert messages == [{"role": "system", "content": "system context"}]
+
+
 def test_session_store_create_and_get() -> None:
     store = SessionStore()
     session = store.create()
