@@ -4,7 +4,8 @@ import pytest
 from docx import Document
 from fastapi.testclient import TestClient
 
-from app.services import session_estimation
+from app.config import get_settings
+from app.services import llm_service, session_estimation
 from app.services.llm_service import LLMServiceError
 from app.sessions import session_store
 
@@ -146,6 +147,42 @@ def test_estimate_session_updates_project_metadata(
     assert metadata["project_name"] == "BookFlow"
     assert "Rails" in metadata["mentioned_technologies"]
     assert "React" in metadata["mentioned_technologies"]
+
+
+def test_estimate_session_sliding_window_caps_llm_history(
+    client: TestClient,
+    session_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MAX_CONVERSATION_TURNS", "6")
+    get_settings.cache_clear()
+
+    call_log: list[list[dict]] = []
+
+    def fake_openai(messages, model, max_tokens):
+        call_log.append(messages)
+        return {
+            "estimation": ESTIMATION_TEXT,
+            "model": "gpt-4o-mini",
+            "provider": "openai",
+            "finish_reason": "stop",
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+
+    monkeypatch.setattr(llm_service, "_call_openai", fake_openai)
+
+    for index in range(8):
+        response = client.post(
+            f"/sessions/{session_id}/estimate",
+            data={"transcript": f"Turn {index}: we need a CRM with auth and roles."},
+        )
+        assert response.status_code == 200
+
+    last_messages = call_log[-1]
+    non_system = [message for message in last_messages if message["role"] != "system"]
+    assert len(non_system) <= get_settings().MAX_CONVERSATION_TURNS * 2
+
+    get_settings.cache_clear()
 
 
 def test_estimate_session_llm_error_returns_500(
