@@ -15,7 +15,7 @@ def test_build_session_estimation_request_uses_defaults() -> None:
     assert request.reference_projects is None
 
 
-def test_run_session_estimation_appends_history(
+def test_run_session_estimation_appends_history_and_updates_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = Session()
@@ -24,12 +24,15 @@ def test_run_session_estimation_appends_history(
         return {"text": "estimate body", "prompt_version": "v2"}
 
     monkeypatch.setattr(
-        "app.services.session_estimation.generate_estimation_from_request",
+        "app.services.session_estimation.generate_session_estimation",
         fake_generate,
     )
 
-    result = run_session_estimation(session, "transcript text here", version="v2")
+    transcript = "The project is called BookFlow and we will use Rails and React."
+    result = run_session_estimation(session, transcript, version="v2")
 
     assert result["text"] == "estimate body"
     assert len(session.history.messages) == 2
-    assert session.history.messages[0].content == "transcript text here"
+    assert session.history.messages[0].content == transcript
+    assert session.project_metadata.project_name == "BookFlow"
+    assert "Rails" in session.project_metadata.mentioned_technologies
