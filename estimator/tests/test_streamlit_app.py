@@ -6,7 +6,13 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 import streamlit_app as estimator_ui
-from app.schemas.request_form import EstimationResponse
+from app.schemas.request_form import (
+    DetailLevel,
+    EstimationResponse,
+    OutputFormat,
+    ProjectType,
+    ReferenceProject,
+)
 
 STREAMLIT_APP = Path(__file__).resolve().parents[1] / "streamlit_app.py"
 VALID_DESCRIPTION = (
@@ -30,7 +36,102 @@ def test_streamlit_app_module_is_importable_without_side_effects() -> None:
     assert callable(estimator_ui.bootstrap)
     assert callable(estimator_ui.render_sidebar)
     assert callable(estimator_ui.render_form)
+    assert callable(estimator_ui.build_estimation_request)
     assert estimator_ui._enum_label(estimator_ui.ProjectType.WEB_SAAS) == "Web Saas"
+
+
+def test_build_estimation_request_without_reference_projects() -> None:
+    request = estimator_ui.build_estimation_request(
+        description=VALID_DESCRIPTION,
+        project_type=ProjectType.WEB_SAAS,
+        detail_level=DetailLevel.MEDIUM,
+        output_format=OutputFormat.PHASES_TABLE,
+        include_reference_projects=False,
+        prompt_version="v1",
+    )
+    assert request.reference_projects is None
+
+
+def test_build_estimation_request_with_reference_projects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sample = [
+        ReferenceProject(
+            name="Example 1 — Multi-tenant Subscription Billing SaaS",
+            scope_summary="Billing SaaS scope",
+            body="Billing SaaS body",
+            project_type=ProjectType.WEB_SAAS,
+        )
+    ]
+    monkeypatch.setattr(estimator_ui, "resolve_reference_projects", lambda **kwargs: sample)
+    request = estimator_ui.build_estimation_request(
+        description=VALID_DESCRIPTION,
+        project_type=ProjectType.WEB_SAAS,
+        detail_level=DetailLevel.MEDIUM,
+        output_format=OutputFormat.PHASES_TABLE,
+        include_reference_projects=True,
+        prompt_version="v1",
+    )
+    assert request.reference_projects == sample
+
+
+def test_form_posts_reference_projects_when_checkbox_enabled(
+    loaded_app: AppTest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    posted: list[dict] = []
+    sample = [
+        ReferenceProject(
+            name="Example 1 — Multi-tenant Subscription Billing SaaS",
+            scope_summary="Billing SaaS scope",
+            body="Billing SaaS body",
+            project_type=ProjectType.WEB_SAAS,
+        )
+    ]
+
+    def fake_post(url: str, **kwargs) -> httpx.Response:
+        posted.append(kwargs)
+        return httpx.Response(
+            200,
+            json={"text": "## Estimate\n\nTotal: 120 hours", "prompt_version": "v1"},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(
+        "app.prompts.examples_catalog.resolve_reference_projects",
+        lambda **kwargs: sample,
+    )
+    monkeypatch.setattr(estimator_ui.httpx, "post", fake_post)
+
+    loaded_app.text_area[0].set_value(VALID_DESCRIPTION)
+    loaded_app.checkbox[0].check()
+    loaded_app.button[0].click().run()
+
+    assert not loaded_app.exception
+    assert posted[0]["json"]["reference_projects"] == [
+        project.model_dump(mode="json") for project in sample
+    ]
+
+
+def test_form_omits_reference_projects_when_checkbox_disabled(
+    loaded_app: AppTest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    posted: list[dict] = []
+
+    def fake_post(url: str, **kwargs) -> httpx.Response:
+        posted.append(kwargs)
+        return httpx.Response(
+            200,
+            json={"text": "## Estimate\n\nTotal: 120 hours", "prompt_version": "v1"},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(estimator_ui.httpx, "post", fake_post)
+
+    loaded_app.text_area[0].set_value(VALID_DESCRIPTION)
+    loaded_app.button[0].click().run()
+
+    assert not loaded_app.exception
+    assert posted[0]["json"]["reference_projects"] is None
 
 
 def test_streamlit_app_loads(loaded_app: AppTest) -> None:
