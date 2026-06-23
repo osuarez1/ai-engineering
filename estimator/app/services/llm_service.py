@@ -84,6 +84,58 @@ def _dispatch_llm(
     raise LLMServiceError(f"Unsupported LLM_PROVIDER: {settings.LLM_PROVIDER}")
 
 
+def generate_estimation_from_messages(
+    messages: list[dict[str, str]],
+    *,
+    version: str = "v2",
+    opts: GenerationOptions | None = None,
+) -> dict:
+    """Generate an estimation from a multi-turn message array.
+
+    ``messages`` must start with ``{"role": "system", ...}`` followed by prior
+    user/assistant turns and the current user message.
+    """
+    opts = opts or GenerationOptions()
+    settings = get_settings()
+    t0 = time.perf_counter()
+    model = opts.model or settings.LLM_MODEL
+    history_turns = max(len(messages) - 2, 0) // 2
+
+    log.info(
+        "generating_estimation_from_messages",
+        provider=settings.LLM_PROVIDER,
+        model=model,
+        prompt_version=version,
+        message_count=len(messages),
+        history_turns=history_turns,
+        max_tokens=opts.max_tokens,
+        thinking_budget=opts.thinking_budget,
+    )
+
+    try:
+        result = _dispatch_llm(
+            messages,
+            model=model,
+            max_tokens=opts.max_tokens,
+            thinking_budget=opts.thinking_budget,
+        )
+    except LLMServiceError:
+        raise
+    except Exception as exc:
+        log.error("llm_call_failed", error=str(exc), provider=settings.LLM_PROVIDER)
+        raise LLMServiceError(f"LLM call failed: {exc}") from exc
+
+    return {
+        "text": result["estimation"],
+        "prompt_version": version,
+        "model": result["model"],
+        "provider": result["provider"],
+        "usage": result["usage"],
+        "finish_reason": result["finish_reason"],
+        "latency_ms": int((time.perf_counter() - t0) * 1000),
+    }
+
+
 def generate_estimation_from_request(
     request: EstimationRequest,
     *,
@@ -150,77 +202,18 @@ def generate_session_estimation(
     version: str = "v2",
     opts: GenerationOptions | None = None,
 ) -> dict:
-    """Generate an estimation for a conversational session turn.
+    """Generate a single-turn session estimation (no prior history).
 
-    The system prompt includes the session's ``project_metadata`` facts.
+    Prefer ``generate_estimation_from_messages`` when orchestrating multi-turn
+    sessions with ``ConversationHistory``.
     """
-    opts = opts or GenerationOptions()
-    settings = get_settings()
-    t0 = time.perf_counter()
-
     system_prompt = render_session_system_prompt(request, project_metadata, version=version)
     user_input = render_session_user_prompt(request, version=version)
-    model = opts.model or settings.LLM_MODEL
-
-    log.info(
-        "generating_session_estimation",
-        provider=settings.LLM_PROVIDER,
-        model=model,
-        prompt_version=version,
-        project_type=request.project_type.value,
-        detail_level=request.detail_level.value,
-        output_format=request.output_format.value,
-        max_tokens=opts.max_tokens,
-        thinking_budget=opts.thinking_budget,
-        has_project_metadata=bool(project_metadata.model_dump(exclude_none=True)),
-    )
-
-    try:
-        if settings.LLM_PROVIDER == "openai":
-            if opts.thinking_budget is not None:
-                log.warning("thinking_budget_ignored_for_provider", provider="openai")
-            result = _call_openai(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_input},
-                ],
-                model=model,
-                max_tokens=opts.max_tokens,
-            )
-        elif settings.LLM_PROVIDER == "anthropic":
-            result = _call_anthropic(
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_input}],
-                model=model,
-                max_tokens=opts.max_tokens,
-                thinking_budget=opts.thinking_budget,
-            )
-        elif settings.LLM_PROVIDER == "gemini":
-            if opts.thinking_budget is not None:
-                log.warning("thinking_budget_ignored_for_provider", provider="gemini")
-            result = _call_gemini(
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_input}],
-                model=model,
-                max_tokens=opts.max_tokens,
-            )
-        else:
-            raise LLMServiceError(f"Unsupported LLM_PROVIDER: {settings.LLM_PROVIDER}")
-    except LLMServiceError:
-        raise
-    except Exception as exc:
-        log.error("llm_call_failed", error=str(exc), provider=settings.LLM_PROVIDER)
-        raise LLMServiceError(f"LLM call failed: {exc}") from exc
-
-    return {
-        "text": result["estimation"],
-        "prompt_version": version,
-        "model": result["model"],
-        "provider": result["provider"],
-        "usage": result["usage"],
-        "finish_reason": result["finish_reason"],
-        "latency_ms": int((time.perf_counter() - t0) * 1000),
-    }
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_input},
+    ]
+    return generate_estimation_from_messages(messages, version=version, opts=opts)
 
 
 # ---------------------------------------------------------------------------
