@@ -10,6 +10,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from app.schemas.request_form import EstimationRequest
+from app.sessions import ProjectMetadata
 
 # Parent of version folders — adding v2 means a new estimation/v2/ directory only.
 _ESTIMATION_ROOT = Path(__file__).parent / "estimation"
@@ -31,6 +32,18 @@ def _get_environment(version: str) -> Environment:
     )
 
 
+def _build_template_context(
+    request: EstimationRequest,
+    project_metadata: ProjectMetadata | None = None,
+) -> dict:
+    context = request.model_dump(mode="json")
+    if project_metadata is None:
+        context["project_metadata"] = None
+    else:
+        context["project_metadata"] = project_metadata.model_dump(mode="json")
+    return context
+
+
 def render_estimation_prompt(
     request: EstimationRequest,
     version: str = "v1",
@@ -40,9 +53,33 @@ def render_estimation_prompt(
     Returns ``(system, user)`` ready to pass as the two message roles to the LLM.
     """
     env = _get_environment(version)
-    # mode="json" serialises enums to their string values (e.g. "phases_table")
-    # so Jinja {% if output_format == "..." %} comparisons work in the templates.
-    context = request.model_dump(mode="json")
+    context = _build_template_context(request)
     system = env.get_template("system.j2").render(**context)
     user = env.get_template("user.j2").render(**context)
     return system, user
+
+
+def render_session_system_prompt(
+    request: EstimationRequest,
+    project_metadata: ProjectMetadata,
+    *,
+    version: str = "v2",
+) -> str:
+    """Render the system prompt for a conversational session turn.
+
+    Injects the current ``project_metadata`` block when facts are known.
+    """
+    env = _get_environment(version)
+    context = _build_template_context(request, project_metadata)
+    return env.get_template("system.j2").render(**context)
+
+
+def render_session_user_prompt(
+    request: EstimationRequest,
+    *,
+    version: str = "v2",
+) -> str:
+    """Render the user prompt for a conversational session turn."""
+    env = _get_environment(version)
+    context = _build_template_context(request)
+    return env.get_template("user.j2").render(**context)
