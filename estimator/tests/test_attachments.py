@@ -11,6 +11,7 @@ from app.services.attachments import (
     enrich_transcript,
     extract_attachment_text,
 )
+from tests.conftest import make_pdf_with_text
 
 
 def _make_blank_pdf() -> bytes:
@@ -28,6 +29,11 @@ def _make_docx(*paragraphs: str) -> bytes:
     buffer = BytesIO()
     document.save(buffer)
     return buffer.getvalue()
+
+
+def test_extract_pdf_reads_generated_text() -> None:
+    text = extract_attachment_text("spec.pdf", make_pdf_with_text("PostgreSQL required"))
+    assert "PostgreSQL required" in text
 
 
 def test_extract_pdf_returns_empty_for_blank_page() -> None:
@@ -78,6 +84,24 @@ def test_enrich_transcript_adds_separator_and_content() -> None:
     assert "Base transcript for the project." in enriched
     assert ATTACHMENT_SEPARATOR.format(filename="spec.docx") in enriched
     assert "Must use PostgreSQL for persistence." in enriched
+
+
+@pytest.mark.asyncio
+async def test_collect_attachment_payloads_reads_multiple_files() -> None:
+    class FakeUpload:
+        def __init__(self, filename: str | None, content: bytes) -> None:
+            self.filename = filename
+            self._content = content
+
+        async def read(self) -> bytes:
+            return self._content
+
+    uploads = [
+        FakeUpload("spec.pdf", b"%PDF"),
+        FakeUpload("brief.docx", b"doc-bytes"),
+    ]
+    payloads = await collect_attachment_payloads(uploads)  # type: ignore[arg-type]
+    assert payloads == [("spec.pdf", b"%PDF"), ("brief.docx", b"doc-bytes")]
 
 
 @pytest.mark.asyncio
