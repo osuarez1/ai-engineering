@@ -1,94 +1,29 @@
-"""Streamlit form interface for software project estimation.
+"""Streamlit conversational interface for multi-turn software estimation.
 
-Session 4 changes (latest):
-- **Chat UI removed** — no ``stream_estimation``, no direct ``llm_service`` imports.
-- **Typed form** — ``st.form`` collects ``request_form.EstimationRequest`` fields
-  and POSTs to ``POST /api/v1/estimate`` via httpx.
-- **Sidebar** — CAG slider and legacy ``build_system_prompt`` previews replaced
-  with read-only Jinja renders (``render_estimation_prompt`` via helpers).
-- **Prompt versioning** — sidebar radio selects v1 or v2; previews and API calls
-  both use ``?prompt_version=`` for live A/B comparison of template sets.
-- **Session state** — ``last_preview_request`` feeds the sidebar; ``last_estimation``
-  persists the API response across reruns.
-- **Similar projects** — optional checkbox resolves ``reference_projects`` from
-  ``examples_catalog`` by project type and forwards them in the API payload.
-
-The UI stays decoupled from the LLM layer: only the API contract and prompt
-templates need to change when estimation logic evolves.
+Session 5 replaces the Session 4 typed form with a session-aware client:
+- ``POST /sessions`` on first load (``session_id`` in ``st.session_state``)
+- ``POST /sessions/{session_id}/estimate`` with transcript + optional attachments
+- Sidebar panel showing distilled ``project_metadata`` (memory vs history)
+- **New conversation** resets the server session and local state
 """
-
-from enum import Enum
 
 import httpx
 import streamlit as st
-from pydantic import ValidationError
 
 from app.config import Settings, get_settings
-# Catalog resolver — matches project_type and excludes the active few-shot branch.
-from app.prompts.examples_catalog import resolve_reference_projects
-# Reuse the same Pydantic models as the API so form fields and JSON payload
-# stay in sync — no duplicate field definitions in the UI layer.
-from app.schemas.request_form import (
-    DetailLevel,
-    EstimationRequest,
-    EstimationResponse,
-    OutputFormat,
-    ProjectType,
-)
+from app.schemas.session import SessionEstimationResponse
 from app.ui import streamlit_helpers
 
-# FastAPI must be running separately (uvicorn app.main:app). Hardcoded for now;
-# a future iteration can move this to Settings / .env.
-API_ESTIMATE_URL = "http://localhost:8000/api/v1/estimate"
-
-
-def _enum_label(member: Enum) -> str:
-    return member.value.replace("_", " ").title()
-
-
-def build_estimation_request(
-    *,
-    description: str,
-    project_type: ProjectType,
-    detail_level: DetailLevel,
-    output_format: OutputFormat,
-    include_reference_projects: bool,
-    prompt_version: str,
-) -> EstimationRequest:
-    """Build a validated request, optionally resolving similar projects from the catalog.
-
-    Kept as a pure helper (no Streamlit imports) so checkbox on/off branches are
-    unit-testable without AppTest widget indices.
-    """
-    # None leaves few-shot examples.j2 in the system prompt; a resolved list
-    # (possibly empty) is forwarded to the API for the {% for %} template path.
-    reference_projects = (
-        resolve_reference_projects(
-            version=prompt_version,
-            project_type=project_type,
-            output_format=output_format,
-            detail_level=detail_level,
-        )
-        if include_reference_projects
-        else None
-    )
-    return EstimationRequest(
-        description=description,
-        project_type=project_type,
-        detail_level=detail_level,
-        output_format=output_format,
-        reference_projects=reference_projects,
-    )
+API_BASE = streamlit_helpers.API_BASE_DEFAULT
 
 
 def bootstrap() -> Settings:
-    """Configure page, load settings, and initialise session state.
-    Calls st.stop() on configuration errors — nothing after this can fail."""
+    """Configure page, load settings, and ensure a server session exists."""
     st.set_page_config(page_title="Software Estimator", layout="wide")
     st.title("Software Estimator")
     st.caption(
-        "Describe your project below to generate a software estimation "
-        "using versioned Jinja2 prompts."
+        "Iterative project estimation with conversational memory. "
+        "Each turn refines the estimate; project facts accumulate in the sidebar."
     )
 
     try:
@@ -101,135 +36,76 @@ def bootstrap() -> Settings:
         )
         st.stop()
 
-    for key, value in streamlit_helpers.initial_session_state().items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-    # API response persisted outside the form so reruns (e.g. sidebar expand) do
-    # not clear the rendered estimation.
-    if "last_estimation" not in st.session_state:
-        st.session_state.last_estimation = None
+    try:
+        streamlit_helpers.ensure_session_id(st.session_state, api_base=API_BASE)
+    except httpx.HTTPError as exc:
+        st.error(f"**Could not create session:** {exc}")
+        st.stop()
 
     return settings
 
 
 def render_sidebar(settings: Settings) -> None:
-    """Render the sidebar configuration panel and Jinja prompt previews."""
+    """Render configuration, project metadata, and new-conversation control."""
     with st.sidebar:
         st.header("Configuration")
         st.text_input("Provider", value=settings.LLM_PROVIDER, disabled=True)
         st.text_input("Model", value=settings.LLM_MODEL, disabled=True)
-        # Outside the form so switching version updates sidebar previews immediately
-        # without requiring a new Estimate submit.
+        st.text_input("Session ID", value=st.session_state.session_id, disabled=True)
         st.radio(
             "Prompt version",
             options=list(streamlit_helpers.SUPPORTED_PROMPT_VERSIONS),
             key="prompt_version",
             horizontal=True,
-            help="Selects the Jinja template set sent to the API (?prompt_version=).",
+            help="Selects the Jinja template set sent to the session estimate API.",
         )
 
-        # Preview uses the last submitted request, or a placeholder until first submit.
-        # Form widget values are not readable outside st.form on partial reruns.
-        preview_request = streamlit_helpers.preview_request(
-            st.session_state.last_preview_request,
-        )
-        # Render with the sidebar selection — same version the next POST will request.
-        system_prompt, user_prompt = streamlit_helpers.sidebar_prompt_preview(
-            preview_request,
-            version=st.session_state.prompt_version,
-        )
+        with st.expander("Project metadata", expanded=True):
+            st.json(st.session_state.project_metadata)
 
-        with st.expander("System prompt", expanded=False):
-            st.text_area(
-                "System prompt",
-                value=system_prompt,
-                height=300,
-                disabled=True,
-                label_visibility="collapsed",
-            )
-
-        with st.expander("User prompt", expanded=False):
-            st.text_area(
-                "User prompt",
-                value=user_prompt,
-                height=200,
-                disabled=True,
-                label_visibility="collapsed",
-            )
+        if st.button("New conversation", type="secondary"):
+            try:
+                streamlit_helpers.reset_conversation_state(
+                    st.session_state,
+                    api_base=API_BASE,
+                )
+            except httpx.HTTPError as exc:
+                st.error(f"**Could not start a new session:** {exc}")
+            else:
+                st.rerun()
 
 
-def render_form() -> None:
-    """Render the estimation form and POST to the API on submit."""
-    # st.form batches widget changes: values are only sent on submit, avoiding
-    # partial reruns while the user is still filling in the fields.
-    # clear_on_submit=False keeps the description visible after submission.
-    with st.form("estimation_form", clear_on_submit=False):
-        description = st.text_area(
-            "Project description",
-            placeholder="Describe the project (minimum 20 characters)...",
-            height=200,
-        )
-        # Selectbox options are driven by the schema enums so new values only
-        # need to be added in request_form.py.
-        project_type = st.selectbox(
-            "Project type",
-            options=list(ProjectType),
-            format_func=_enum_label,
-        )
-        detail_level = st.selectbox(
-            "Detail level",
-            options=list(DetailLevel),
-            format_func=_enum_label,
-        )
-        output_format = st.selectbox(
-            "Output format",
-            options=list(OutputFormat),
-            format_func=_enum_label,
-        )
-        # Optional similar-projects context — resolved from examples_catalog by
-        # project_type, mutually exclusive with the static few-shot block.
-        include_reference_projects = st.checkbox(
-            "Include similar projects context",
-            help=(
-                "Injects similar completed projects matching your project type "
-                "(replaces few-shot examples when matches are found)."
-            ),
-        )
-        submitted = st.form_submit_button("Estimate")
+def render_conversation() -> None:
+    """Render transcript input, attachments, and the latest estimation."""
+    transcript = st.text_area(
+        "Transcript",
+        placeholder="Describe the project or add detail for this turn (minimum 20 characters)...",
+        height=200,
+    )
+    uploads = st.file_uploader(
+        "Attachments (optional)",
+        type=["pdf", "docx"],
+        accept_multiple_files=True,
+        help="PDF or Word documents with supplementary specifications.",
+    )
 
-    if submitted:
-        # Client-side validation mirrors the API — fail fast before httpx.post.
-        try:
-            request = build_estimation_request(
-                description=description,
-                project_type=project_type,
-                detail_level=detail_level,
-                output_format=output_format,
-                include_reference_projects=include_reference_projects,
-                prompt_version=st.session_state.prompt_version,
-            )
-        except ValidationError as exc:
-            for err in exc.errors():
-                loc = " → ".join(str(part) for part in err["loc"])
-                st.error(f"**{loc}:** {err['msg']}")
+    if st.button("Estimate", type="primary"):
+        validation_error = streamlit_helpers.validate_transcript(transcript)
+        if validation_error:
+            st.error(f"**{validation_error}**")
             return
 
-        # Update sidebar previews even if the API call fails later.
-        st.session_state.last_preview_request = request
+        attachments = streamlit_helpers.prepare_attachment_payloads(uploads)
 
         with st.spinner("Generating estimation..."):
             try:
-                # mode="json" serialises enums to their string values (e.g.
-                # "web_saas") so the payload matches the API JSON contract.
-                response = httpx.post(
-                    API_ESTIMATE_URL,
-                    # Query param mirrors estimations.create_estimation prompt_version.
-                    params={"prompt_version": st.session_state.prompt_version},
-                    json=request.model_dump(mode="json"),
-                    timeout=120.0,
+                result = streamlit_helpers.submit_session_estimate(
+                    st.session_state.session_id,
+                    transcript,
+                    attachments,
+                    api_base=API_BASE,
+                    prompt_version=st.session_state.prompt_version,
                 )
-                response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 detail = exc.response.text.strip() or exc.response.reason_phrase
                 st.error(f"**Estimation failed ({exc.response.status_code}):** {detail}")
@@ -238,18 +114,11 @@ def render_form() -> None:
                 st.error(f"**Could not reach API:** {exc}")
                 return
 
-        try:
-            result = EstimationResponse.model_validate(response.json())
-        except ValidationError as exc:
-            st.error(f"**Invalid API response:** {exc}")
-            return
-
         st.session_state.last_estimation = result
+        st.session_state.project_metadata = result.project_metadata.model_dump()
 
-    # Render outside the submit branch so the result survives sidebar reruns.
     if st.session_state.last_estimation is not None:
-        result: EstimationResponse = st.session_state.last_estimation
-        # Echo the version the API actually used (may differ if the API default changes).
+        result: SessionEstimationResponse = st.session_state.last_estimation
         st.caption(f"Prompt version: {result.prompt_version}")
         st.markdown(result.text)
 
@@ -257,7 +126,7 @@ def render_form() -> None:
 def main() -> None:
     settings = bootstrap()
     render_sidebar(settings)
-    render_form()
+    render_conversation()
 
 
 if __name__ == "__main__":
