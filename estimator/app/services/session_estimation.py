@@ -1,7 +1,8 @@
 """Orchestration for multi-turn session estimations."""
 
 from app.schemas.request_form import DetailLevel, EstimationRequest, OutputFormat, ProjectType
-from app.services.llm_service import generate_estimation_from_request
+from app.services.llm_service import generate_session_estimation
+from app.services.metadata_extractor import update_metadata_heuristic
 from app.sessions import Session
 
 
@@ -28,9 +29,18 @@ def run_session_estimation(
     *,
     version: str = "v2",
 ) -> dict:
-    """Generate an estimate, append the turn to session history, and return LLM result."""
+    """Generate an estimate, update memory, and append the turn to history."""
     request = build_session_estimation_request(enriched_transcript)
-    result = generate_estimation_from_request(request, version=version)
+    result = generate_session_estimation(
+        request,
+        session.project_metadata,
+        version=version,
+    )
+    session.project_metadata = update_metadata_heuristic(
+        session.project_metadata,
+        enriched_transcript,
+        result["text"],
+    )
     session.history.add_turn(enriched_transcript, result["text"])
     session.touch()
     return result
