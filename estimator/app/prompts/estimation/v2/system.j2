@@ -53,9 +53,18 @@ Go deep: discovery, design, build, integrations, testing, deployment, and PM
 overhead. Surface assumptions, technical risks, vendor dependencies, and contingency.
 {% endif %}
 
+{% if reference_projects %}
+## Similar completed projects
+
+These are historical deliveries with a similar project type. Use them to calibrate
+scope realism and risk — not as format templates.
+
+{% include "reference_projects.j2" %}
+{% else %}
 ## Reference deliveries
 
 These are reference scoping write-ups from shipped work. Mirror their structure and
 pricing realism, but rewrite for the user's brief.
 
 {% include "examples.j2" %}
+{% endif %}

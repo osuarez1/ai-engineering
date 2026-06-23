@@ -58,6 +58,14 @@ integration, testing, deployment, and project management overhead. Include expli
 assumptions, technical risks, external dependencies, and contingency considerations.
 {% endif %}
 
+{% if reference_projects %}
+## Similar completed projects
+
+These are historical deliveries with a similar project type. Use them to calibrate
+scope realism and risk — not as format templates.
+
+{% include "reference_projects.j2" %}
+{% else %}
 ## Reference examples
 
 Below are examples of well-formed estimations from previous projects. Use them as a
@@ -65,3 +73,4 @@ guide for structure, level of detail, and realistic pricing. Adapt the content t
 match the specific project described by the user.
 
 {% include "examples.j2" %}
+{% endif %}
