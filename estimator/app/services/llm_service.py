@@ -42,6 +42,48 @@ class GenerationOptions:
     thinking_budget: int | None = None
 
 
+def _split_system_and_turns(messages: list[dict[str, str]]) -> tuple[str, list[dict[str, str]]]:
+    """Separate the leading system message from user/assistant turns."""
+    if not messages or messages[0]["role"] != "system":
+        raise LLMServiceError("messages must start with a system role entry")
+    return messages[0]["content"], messages[1:]
+
+
+def _dispatch_llm(
+    messages: list[dict[str, str]],
+    *,
+    model: str,
+    max_tokens: int,
+    thinking_budget: int | None,
+) -> dict:
+    """Route a full message array (system first) to the configured provider."""
+    settings = get_settings()
+    system_prompt, turns = _split_system_and_turns(messages)
+
+    if settings.LLM_PROVIDER == "openai":
+        if thinking_budget is not None:
+            log.warning("thinking_budget_ignored_for_provider", provider="openai")
+        return _call_openai(messages=messages, model=model, max_tokens=max_tokens)
+    if settings.LLM_PROVIDER == "anthropic":
+        return _call_anthropic(
+            system=system_prompt,
+            messages=turns,
+            model=model,
+            max_tokens=max_tokens,
+            thinking_budget=thinking_budget,
+        )
+    if settings.LLM_PROVIDER == "gemini":
+        if thinking_budget is not None:
+            log.warning("thinking_budget_ignored_for_provider", provider="gemini")
+        return _call_gemini(
+            system=system_prompt,
+            messages=turns,
+            model=model,
+            max_tokens=max_tokens,
+        )
+    raise LLMServiceError(f"Unsupported LLM_PROVIDER: {settings.LLM_PROVIDER}")
+
+
 def generate_estimation_from_request(
     request: EstimationRequest,
     *,
@@ -58,6 +100,10 @@ def generate_estimation_from_request(
     t0 = time.perf_counter()
 
     system_prompt, user_input = render_estimation_prompt(request, version=version)
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_input},
+    ]
     model = opts.model or settings.LLM_MODEL
 
     log.info(
@@ -72,38 +118,13 @@ def generate_estimation_from_request(
         thinking_budget=opts.thinking_budget,
     )
 
-    # Each provider receives system and user as separate roles — never concatenated.
     try:
-        if settings.LLM_PROVIDER == "openai":
-            if opts.thinking_budget is not None:
-                log.warning("thinking_budget_ignored_for_provider", provider="openai")
-            result = _call_openai(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_input},
-                ],
-                model=model,
-                max_tokens=opts.max_tokens,
-            )
-        elif settings.LLM_PROVIDER == "anthropic":
-            result = _call_anthropic(
-                system=system_prompt,
-                user_message=user_input,
-                model=model,
-                max_tokens=opts.max_tokens,
-                thinking_budget=opts.thinking_budget,
-            )
-        elif settings.LLM_PROVIDER == "gemini":
-            if opts.thinking_budget is not None:
-                log.warning("thinking_budget_ignored_for_provider", provider="gemini")
-            result = _call_gemini(
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_input}],
-                model=model,
-                max_tokens=opts.max_tokens,
-            )
-        else:
-            raise LLMServiceError(f"Unsupported LLM_PROVIDER: {settings.LLM_PROVIDER}")
+        result = _dispatch_llm(
+            messages,
+            model=model,
+            max_tokens=opts.max_tokens,
+            thinking_budget=opts.thinking_budget,
+        )
     except LLMServiceError:
         raise
     except Exception as exc:
@@ -169,7 +190,7 @@ def generate_session_estimation(
         elif settings.LLM_PROVIDER == "anthropic":
             result = _call_anthropic(
                 system=system_prompt,
-                user_message=user_input,
+                messages=[{"role": "user", "content": user_input}],
                 model=model,
                 max_tokens=opts.max_tokens,
                 thinking_budget=opts.thinking_budget,
@@ -287,12 +308,12 @@ def _call_openai(messages: list[dict], model: str, max_tokens: int) -> dict:
 
 def _call_anthropic(
     system: str,
-    user_message: str,
+    messages: list[dict[str, str]],
     model: str,
     max_tokens: int,
     thinking_budget: int | None,
 ) -> dict:
-    """Send a message request to the Anthropic API."""
+    """Send a multi-turn message request to the Anthropic API."""
     from anthropic import Anthropic
 
     settings = get_settings()
@@ -302,7 +323,7 @@ def _call_anthropic(
         "model": model,
         "max_tokens": max_tokens,
         "system": system,
-        "messages": [{"role": "user", "content": user_message}],
+        "messages": messages,
     }
     if thinking_budget is not None:
         kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}

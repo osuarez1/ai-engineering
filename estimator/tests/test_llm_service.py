@@ -289,7 +289,7 @@ def test_call_anthropic(monkeypatch: pytest.MonkeyPatch, anthropic_settings: Non
 
     result = _call_anthropic(
         system="system prompt",
-        user_message="user prompt",
+        messages=[{"role": "user", "content": "user prompt"}],
         model="claude-haiku-4-5",
         max_tokens=1000,
         thinking_budget=None,
@@ -316,7 +316,7 @@ def test_call_anthropic_with_thinking_budget(
 
     _call_anthropic(
         system="system prompt",
-        user_message="user prompt",
+        messages=[{"role": "user", "content": "user prompt"}],
         model="claude-haiku-4-5",
         max_tokens=1000,
         thinking_budget=500,
@@ -325,6 +325,36 @@ def test_call_anthropic_with_thinking_budget(
     kwargs = mock_client.messages.create.call_args.kwargs
     assert kwargs["thinking"] == {"type": "enabled", "budget_tokens": 500}
     assert kwargs["max_tokens"] == 1524
+
+
+def test_call_anthropic_multiturn(monkeypatch: pytest.MonkeyPatch, anthropic_settings: None) -> None:
+    text_block = SimpleNamespace(type="text", text=ESTIMATION_TEXT)
+    mock_response = SimpleNamespace(
+        content=[text_block],
+        stop_reason="end_turn",
+        model="claude-haiku-4-5",
+        usage=SimpleNamespace(input_tokens=5, output_tokens=7),
+    )
+
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = mock_response
+    monkeypatch.setattr("anthropic.Anthropic", lambda api_key: mock_client)
+
+    result = _call_anthropic(
+        system="system prompt",
+        messages=[
+            {"role": "user", "content": "turn 1"},
+            {"role": "assistant", "content": "reply 1"},
+            {"role": "user", "content": "turn 2"},
+        ],
+        model="claude-haiku-4-5",
+        max_tokens=1000,
+        thinking_budget=None,
+    )
+
+    sent_messages = mock_client.messages.create.call_args.kwargs["messages"]
+    assert len(sent_messages) == 3
+    assert result["estimation"] == ESTIMATION_TEXT
 
 
 def test_call_gemini(monkeypatch: pytest.MonkeyPatch, gemini_settings: None) -> None:
