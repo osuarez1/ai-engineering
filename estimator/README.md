@@ -138,6 +138,20 @@ Implementamos **Path B** — extraccion de texto en el servicio AI con `pypdf` (
 
 Path A (subir el PDF al proveedor multimodal) es valido cuando la velocidad de desarrollo prima y se acepta acoplamiento al proveedor; para este ejercicio elegimos Path B.
 
+### Extraccion de `project_metadata`: heuristica
+
+Tras cada turno, el servicio actualiza `project_metadata` con reglas heuristicas (`app/services/metadata_extractor.py`): regex para nombre de proyecto y tamano de equipo, vocabulario de tecnologias conocidas, y patrones simples para alcance acordado.
+
+**Por que heuristica y no un extractor LLM:**
+
+- **Coste y latencia cero** — no hay una segunda llamada al modelo por turno.
+- **Comportamiento predecible** — facil de depurar en tests y en el panel de metadata del cliente.
+- **Dominio acotado** — los hechos relevantes (nombre, stack, equipo, alcance) encajan en patrones razonables en esta fase.
+
+Un extractor LLM (segunda llamada con prompt estructurado) es mas robusto ante variaciones de lenguaje y multilingue; es la evolucion natural si la heuristica empieza a fallar en produccion.
+
+El bloque `<project_metadata>` se inyecta en el system prompt via `_project_metadata.j2` (v1 y v2) y se regenera en cada llamada junto con el sliding window de historial.
+
 ## Probar el servicio
 
 Health check:
@@ -208,6 +222,7 @@ estimator/
 │   ├── schemas/session.py         # SessionCreateResponse / SessionEstimationResponse
 │   ├── services/llm_service.py    # generate_estimation_from_request (3 proveedores)
 │   ├── services/attachments.py    # Extraccion local PDF/DOCX (Path B)
+│   ├── services/metadata_extractor.py  # Heuristica post-turno para project_metadata
 │   ├── services/session_estimation.py
 │   ├── sessions.py                # ConversationHistory, ProjectMetadata, SessionStore
 │   ├── prompts/
