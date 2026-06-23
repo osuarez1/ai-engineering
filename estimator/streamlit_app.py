@@ -10,6 +10,8 @@ Session 4 changes (latest):
   both use ``?prompt_version=`` for live A/B comparison of template sets.
 - **Session state** — ``last_preview_request`` feeds the sidebar; ``last_estimation``
   persists the API response across reruns.
+- **Similar projects** — optional checkbox resolves ``reference_projects`` from
+  ``examples_catalog`` by project type and forwards them in the API payload.
 
 The UI stays decoupled from the LLM layer: only the API contract and prompt
 templates need to change when estimation logic evolves.
@@ -22,6 +24,8 @@ import streamlit as st
 from pydantic import ValidationError
 
 from app.config import Settings, get_settings
+# Catalog resolver — matches project_type and excludes the active few-shot branch.
+from app.prompts.examples_catalog import resolve_reference_projects
 # Reuse the same Pydantic models as the API so form fields and JSON payload
 # stay in sync — no duplicate field definitions in the UI layer.
 from app.schemas.request_form import (
@@ -40,6 +44,41 @@ API_ESTIMATE_URL = "http://localhost:8000/api/v1/estimate"
 
 def _enum_label(member: Enum) -> str:
     return member.value.replace("_", " ").title()
+
+
+def build_estimation_request(
+    *,
+    description: str,
+    project_type: ProjectType,
+    detail_level: DetailLevel,
+    output_format: OutputFormat,
+    include_reference_projects: bool,
+    prompt_version: str,
+) -> EstimationRequest:
+    """Build a validated request, optionally resolving similar projects from the catalog.
+
+    Kept as a pure helper (no Streamlit imports) so checkbox on/off branches are
+    unit-testable without AppTest widget indices.
+    """
+    # None leaves few-shot examples.j2 in the system prompt; a resolved list
+    # (possibly empty) is forwarded to the API for the {% for %} template path.
+    reference_projects = (
+        resolve_reference_projects(
+            version=prompt_version,
+            project_type=project_type,
+            output_format=output_format,
+            detail_level=detail_level,
+        )
+        if include_reference_projects
+        else None
+    )
+    return EstimationRequest(
+        description=description,
+        project_type=project_type,
+        detail_level=detail_level,
+        output_format=output_format,
+        reference_projects=reference_projects,
+    )
 
 
 def bootstrap() -> Settings:
@@ -148,16 +187,27 @@ def render_form() -> None:
             options=list(OutputFormat),
             format_func=_enum_label,
         )
+        # Optional similar-projects context — resolved from examples_catalog by
+        # project_type, mutually exclusive with the static few-shot block.
+        include_reference_projects = st.checkbox(
+            "Include similar projects context",
+            help=(
+                "Injects similar completed projects matching your project type "
+                "(replaces few-shot examples when matches are found)."
+            ),
+        )
         submitted = st.form_submit_button("Estimate")
 
     if submitted:
         # Client-side validation mirrors the API — fail fast before httpx.post.
         try:
-            request = EstimationRequest(
+            request = build_estimation_request(
                 description=description,
                 project_type=project_type,
                 detail_level=detail_level,
                 output_format=output_format,
+                include_reference_projects=include_reference_projects,
+                prompt_version=st.session_state.prompt_version,
             )
         except ValidationError as exc:
             for err in exc.errors():
