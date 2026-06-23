@@ -88,6 +88,8 @@ uv run streamlit run streamlit_app.py
 
 Abre `http://localhost:8501`. Al cargar la pagina se crea una sesion (`POST /sessions`) y se guarda el `session_id`. El area principal acepta **transcript** y adjuntos PDF/DOCX; **Estimate** envia `POST /sessions/{session_id}/estimate`. La barra lateral muestra el `project_metadata` actualizado tras cada turno y un boton **New conversation** que crea una sesion nueva y reinicia el estado local.
 
+Detalle del cliente HTTP (sin llamadas directas al LLM): [docs/ARCHITECTURE.md#clients](docs/ARCHITECTURE.md#clients).
+
 ## Sesiones conversacionales (Session 05)
 
 El servicio soporta estimacion multi-turno con memoria en proceso y documentos adjuntos.

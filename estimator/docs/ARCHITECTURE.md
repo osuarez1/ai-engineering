@@ -83,3 +83,32 @@ Sessions live in a process-local `SessionStore` (no database). Each `Session` ho
 - `session_id`, `created_at`, `updated_at`.
 
 Restarting the process clears all sessions.
+
+## Clients
+
+### Streamlit (`streamlit_app.py`)
+
+The Session 5 UI is an **HTTP client only** — it does not import `llm_service` or call providers directly. FastAPI must be running separately (default `http://localhost:8000`).
+
+```mermaid
+flowchart LR
+  UI["streamlit_app.py"]
+  Helpers["streamlit_helpers.py"]
+  API["FastAPI session routes"]
+  Orch["session_estimation.py"]
+
+  UI --> Helpers
+  Helpers -->|"POST /sessions"| API
+  Helpers -->|"POST /sessions/{id}/estimate"| API
+  API --> Orch
+```
+
+| UI action | HTTP call | Local state updated |
+|-----------|-----------|---------------------|
+| Page load / bootstrap | `POST /sessions` via `ensure_session_id` | `session_id` |
+| **Estimate** | `POST /sessions/{id}/estimate` (multipart: transcript + optional PDF/DOCX) | `last_estimation`, `project_metadata` |
+| **New conversation** | `POST /sessions` via `reset_conversation_state` | New `session_id`; clears `project_metadata` and `last_estimation` |
+
+Pure HTTP and validation logic lives in `app/ui/streamlit_helpers.py` (no Streamlit imports) so behaviour is unit-testable without AppTest. The sidebar displays `project_metadata` returned by the API — memory the server maintains across turns, distinct from the transcript the user types each time.
+
+The legacy Session 4 form client (`POST /api/v1/estimate`) is no longer exposed in Streamlit; the form API path remains available for curl, tests, and other HTTP clients.
