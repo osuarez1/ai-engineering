@@ -34,3 +34,11 @@ def test_missing_api_key_raises_for_provider(
 ) -> None:
     with pytest.raises(ValidationError, match=message):
         Settings(LLM_PROVIDER=provider, **{field: None})
+
+
+def test_max_conversation_turns_default() -> None:
+    settings = Settings(
+        LLM_PROVIDER="openai",
+        OPENAI_API_KEY="sk-test",
+    )
+    assert settings.MAX_CONVERSATION_TURNS == 6

@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "claude-haiku-4-5"
     APP_ENV: Literal["development", "staging", "production"] = "development"
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "DEBUG"
+    MAX_CONVERSATION_TURNS: int = 6
 
     @model_validator(mode="after")
     def validate_api_key_for_provider(self) -> "Settings":
