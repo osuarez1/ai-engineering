@@ -3,7 +3,8 @@
 import httpx
 import pytest
 
-from app.services import session_estimation
+from app.config import get_settings
+from app.services import llm_service, session_estimation
 from tests.conftest import make_pdf_with_text
 
 TRANSCRIPT = "We need a small CRM with auth, contacts and roles. MVP in six weeks."
@@ -66,3 +67,31 @@ async def test_multi_turn_metadata_updates(
     assert metadata["project_name"] == "BookFlow"
     assert metadata["assumed_team_size"] == 3
     assert "Redis" in metadata["mentioned_technologies"]
+
+
+@pytest.mark.asyncio
+async def test_pdf_attachment_influences_llm_context(
+    async_client: httpx.AsyncClient,
+    async_session_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PDF attachment should enrich the user message sent to the LLM."""
+    captured: list[list[dict]] = []
+
+    def fake_generate(messages, *, version: str = "v2", opts=None) -> dict:
+        captured.append(messages)
+        return _fake_llm_result()
+
+    monkeypatch.setattr(session_estimation, "generate_estimation_from_messages", fake_generate)
+
+    pdf_bytes = make_pdf_with_text("PostgreSQL required for persistence.")
+    response = await async_client.post(
+        f"/sessions/{async_session_id}/estimate",
+        data={"transcript": TRANSCRIPT},
+        files=[("attachments", ("spec.pdf", pdf_bytes, "application/pdf"))],
+    )
+
+    assert response.status_code == 200
+    user_message = captured[0][-1]["content"]
+    assert "=== attachment: spec.pdf ===" in user_message
+    assert "PostgreSQL required" in user_message
