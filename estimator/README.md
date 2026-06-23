@@ -72,9 +72,9 @@ uv sync
 uv run uvicorn app.main:app --reload
 ```
 
-## Interfaz web (Streamlit — Session 4)
+## Interfaz web (Streamlit — Session 5)
 
-Formulario tipado que envia la peticion a la API via HTTP. **No es chat ni streaming** — requiere que FastAPI este corriendo en paralelo.
+Cliente conversacional multi-turno que habla con la API de sesiones. **Requiere FastAPI en paralelo.**
 
 ```bash
 # Terminal 1 — API
@@ -86,7 +86,7 @@ cp .env.example .env   # configurar API key segun LLM_PROVIDER
 uv run streamlit run streamlit_app.py
 ```
 
-Abre `http://localhost:8501`. La barra lateral muestra proveedor y modelo (solo lectura), selector de version de prompt (`v1` / `v2`) y vistas previas del system/user prompt renderizados con Jinja. El formulario POSTea a `http://localhost:8000/api/v1/estimate?prompt_version=...` usando los mismos modelos Pydantic que la API.
+Abre `http://localhost:8501`. Al cargar la pagina se crea una sesion (`POST /sessions`) y se guarda el `session_id`. El area principal acepta **transcript** y adjuntos PDF/DOCX; **Estimate** envia `POST /sessions/{session_id}/estimate`. La barra lateral muestra el `project_metadata` actualizado tras cada turno y un boton **New conversation** que crea una sesion nueva y reinicia el estado local.
 
 ## Sesiones conversacionales (Session 05)
 
@@ -230,10 +230,10 @@ estimator/
 │   ├── prompts/
 │   │   ├── loader.py              # render_estimation_prompt()
 │   │   └── estimation/v1|v2/      # system.j2, user.j2, examples.j2
-│   ├── ui/streamlit_helpers.py    # Helpers puros para sidebar/previews
+│   ├── ui/streamlit_helpers.py    # Helpers HTTP puros para cliente de sesiones
 │   └── fixtures/                  # Transcripciones de ejemplo (solo fixtures)
 ├── docs/ARCHITECTURE.md           # Flujos de arquitectura (form vs sesion multi-turno)
-├── streamlit_app.py               # UI formulario (cliente HTTP)
+├── streamlit_app.py               # UI conversacional (cliente HTTP de sesiones)
 ├── tests/                         # pytest + AppTest
 ├── Dockerfile                     # Build multi-stage con uv
 ├── docker-compose.yml             # Configuracion para desarrollo local
