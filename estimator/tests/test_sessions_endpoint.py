@@ -44,7 +44,7 @@ def test_estimate_session_returns_estimation(
 ) -> None:
     monkeypatch.setattr(
         session_estimation,
-        "generate_session_estimation",
+        "generate_estimation_from_messages",
         lambda *args, **kwargs: _fake_llm_result(),
     )
 
@@ -69,13 +69,13 @@ def test_estimate_session_with_docx_attachment(
     session_id: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured: list[str] = []
+    captured: list[list[dict]] = []
 
-    def fake_generate(request, project_metadata, *, version: str = "v2", opts=None) -> dict:
-        captured.append(request.description)
+    def fake_generate(messages, *, version: str = "v2", opts=None) -> dict:
+        captured.append(messages)
         return _fake_llm_result()
 
-    monkeypatch.setattr(session_estimation, "generate_session_estimation", fake_generate)
+    monkeypatch.setattr(session_estimation, "generate_estimation_from_messages", fake_generate)
 
     docx_bytes = _make_docx("Architecture requires PostgreSQL and Redis.")
     response = client.post(
@@ -85,8 +85,8 @@ def test_estimate_session_with_docx_attachment(
     )
 
     assert response.status_code == 200
-    assert "=== attachment: spec.docx ===" in captured[0]
-    assert "PostgreSQL and Redis" in captured[0]
+    assert "=== attachment: spec.docx ===" in captured[0][-1]["content"]
+    assert "PostgreSQL and Redis" in captured[0][-1]["content"]
 
 
 def test_estimate_session_unknown_session_returns_404(client: TestClient) -> None:
@@ -128,7 +128,7 @@ def test_estimate_session_updates_project_metadata(
 ) -> None:
     monkeypatch.setattr(
         session_estimation,
-        "generate_session_estimation",
+        "generate_estimation_from_messages",
         lambda *args, **kwargs: _fake_llm_result(),
     )
 
@@ -156,7 +156,7 @@ def test_estimate_session_llm_error_returns_500(
     def boom(*args, **kwargs):
         raise LLMServiceError("provider unavailable")
 
-    monkeypatch.setattr(session_estimation, "generate_session_estimation", boom)
+    monkeypatch.setattr(session_estimation, "generate_estimation_from_messages", boom)
 
     response = client.post(
         f"/sessions/{session_id}/estimate",
