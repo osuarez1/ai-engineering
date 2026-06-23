@@ -12,6 +12,7 @@ roles, these tests should fail before a bad prompt ever reaches a model.
 
 import pytest
 
+from app.prompts.examples_catalog import resolve_reference_projects
 from app.prompts.loader import render_estimation_prompt
 from app.schemas.request_form import (
     DetailLevel,
@@ -61,6 +62,7 @@ def _request(
     project_type: ProjectType = ProjectType.WEB_SAAS,
     output_format: OutputFormat = OutputFormat.PHASES_TABLE,
     detail_level: DetailLevel = DetailLevel.MEDIUM,
+    reference_projects: list | None = None,
 ) -> EstimationRequest:
     """Build a valid EstimationRequest, overriding only the fields a test cares about."""
     return EstimationRequest(
@@ -68,6 +70,28 @@ def _request(
         project_type=project_type,
         detail_level=detail_level,
         output_format=output_format,
+        reference_projects=reference_projects,
+    )
+
+
+def _request_with_resolved_reference_projects(
+    *,
+    description: str = _UNIQUE_DESCRIPTION,
+    project_type: ProjectType = ProjectType.MOBILE_APP,
+    output_format: OutputFormat = OutputFormat.PHASES_TABLE,
+    detail_level: DetailLevel = DetailLevel.MEDIUM,
+) -> EstimationRequest:
+    return _request(
+        description=description,
+        project_type=project_type,
+        output_format=output_format,
+        detail_level=detail_level,
+        reference_projects=resolve_reference_projects(
+            version="v1",
+            project_type=project_type,
+            output_format=output_format,
+            detail_level=detail_level,
+        ),
     )
 
 
@@ -280,3 +304,49 @@ def test_user_prompt_renders_description_literals_unchanged(description: str) ->
     _, user = render_estimation_prompt(_request(description=description), version="v1")
 
     assert description in user
+
+
+# ---------------------------------------------------------------------------
+# Reference projects (reference_projects.j2) — dynamic similar-project context
+# ---------------------------------------------------------------------------
+
+
+def test_v1_reference_projects_renders_similar_completed_projects_section() -> None:
+    request = _request_with_resolved_reference_projects()
+    system, _ = render_estimation_prompt(request, version="v1")
+
+    assert "Similar completed projects" in system
+    assert "Warehouse Barcode Scanner App" in system
+    assert "Reference examples" not in system
+
+
+def test_v1_reference_projects_excludes_active_few_shot_titles() -> None:
+    request = _request_with_resolved_reference_projects()
+    system, _ = render_estimation_prompt(request, version="v1")
+
+    assert "Field Service Mobile App" not in system
+    assert "Retail Sales Analytics Pipeline" not in system
+
+
+def test_v1_reference_projects_includes_scope_and_body() -> None:
+    request = _request_with_resolved_reference_projects()
+    system, _ = render_estimation_prompt(request, version="v1")
+
+    assert "warehouse staff" in system
+    assert "Barcode scanning module" in system
+
+
+def test_v1_reference_projects_none_uses_static_examples() -> None:
+    system, _ = render_estimation_prompt(_request(reference_projects=None), version="v1")
+
+    assert "Reference examples" in system
+    assert "Field Service Mobile App" in system
+    assert "Similar completed projects" not in system
+
+
+def test_v1_empty_reference_projects_falls_back_to_static_examples() -> None:
+    system, _ = render_estimation_prompt(_request(reference_projects=[]), version="v1")
+
+    assert "Reference examples" in system
+    assert "Field Service Mobile App" in system
+    assert "Similar completed projects" not in system
