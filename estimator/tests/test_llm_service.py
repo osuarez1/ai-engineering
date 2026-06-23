@@ -20,7 +20,9 @@ from app.services.llm_service import (
     _normalize_gemini_finish_reason,
     _to_gemini_contents,
     generate_estimation_from_request,
+    generate_session_estimation,
 )
+from app.sessions import ProjectMetadata
 
 REQUEST = EstimationRequest(
     description="We need a small CRM with auth, contacts and roles. MVP in six weeks.",
@@ -55,6 +57,111 @@ def test_generate_estimation_from_request_openai(
 
     assert result["provider"] == "openai"
     assert result["text"] == ESTIMATION_TEXT
+
+
+def test_generate_session_estimation_openai(
+    monkeypatch: pytest.MonkeyPatch, openai_settings: None
+) -> None:
+    monkeypatch.setattr(
+        llm_service,
+        "_call_openai",
+        lambda messages, model, max_tokens: _provider_result("openai"),
+    )
+
+    metadata = ProjectMetadata(project_name="BookFlow")
+    result = generate_session_estimation(REQUEST, metadata, version="v2")
+
+    assert result["provider"] == "openai"
+    assert result["text"] == ESTIMATION_TEXT
+    assert result["prompt_version"] == "v2"
+
+
+def test_generate_session_estimation_anthropic(
+    monkeypatch: pytest.MonkeyPatch, anthropic_settings: None
+) -> None:
+    monkeypatch.setattr(
+        llm_service,
+        "_call_anthropic",
+        lambda **kwargs: _provider_result("anthropic"),
+    )
+
+    result = generate_session_estimation(REQUEST, ProjectMetadata(), version="v2")
+    assert result["provider"] == "anthropic"
+
+
+def test_generate_session_estimation_gemini(
+    monkeypatch: pytest.MonkeyPatch, gemini_settings: None
+) -> None:
+    monkeypatch.setattr(
+        llm_service,
+        "_call_gemini",
+        lambda **kwargs: _provider_result("gemini"),
+    )
+
+    result = generate_session_estimation(REQUEST, ProjectMetadata(), version="v2")
+    assert result["provider"] == "gemini"
+
+
+def test_generate_session_estimation_thinking_budget_ignored_for_openai(
+    monkeypatch: pytest.MonkeyPatch, openai_settings: None
+) -> None:
+    monkeypatch.setattr(
+        llm_service,
+        "_call_openai",
+        lambda messages, model, max_tokens: _provider_result("openai"),
+    )
+
+    result = generate_session_estimation(
+        REQUEST,
+        ProjectMetadata(),
+        version="v2",
+        opts=GenerationOptions(thinking_budget=1000),
+    )
+    assert result["provider"] == "openai"
+
+
+def test_generate_session_estimation_thinking_budget_ignored_for_gemini(
+    monkeypatch: pytest.MonkeyPatch, gemini_settings: None
+) -> None:
+    monkeypatch.setattr(
+        llm_service,
+        "_call_gemini",
+        lambda **kwargs: _provider_result("gemini"),
+    )
+
+    result = generate_session_estimation(
+        REQUEST,
+        ProjectMetadata(),
+        version="v2",
+        opts=GenerationOptions(thinking_budget=1000),
+    )
+    assert result["provider"] == "gemini"
+
+
+def test_generate_session_estimation_unsupported_provider_raises(
+    monkeypatch: pytest.MonkeyPatch, openai_settings: None
+) -> None:
+    settings = SimpleNamespace(
+        LLM_PROVIDER="unsupported",
+        LLM_MODEL="test-model",
+        OPENAI_API_KEY="sk-test",
+    )
+    monkeypatch.setattr(llm_service, "get_settings", lambda: settings)
+
+    with pytest.raises(LLMServiceError, match="Unsupported LLM_PROVIDER"):
+        generate_session_estimation(REQUEST, ProjectMetadata(), version="v2")
+
+
+def test_generate_session_estimation_generic_exception_wrapped(
+    monkeypatch: pytest.MonkeyPatch, openai_settings: None
+) -> None:
+    def boom(*args, **kwargs):
+        raise RuntimeError("network timeout")
+
+    monkeypatch.setattr(llm_service, "_call_openai", boom)
+
+    with pytest.raises(LLMServiceError, match="LLM call failed: network timeout"):
+        generate_session_estimation(REQUEST, ProjectMetadata(), version="v2")
 
 
 def test_generate_estimation_from_request_anthropic(
