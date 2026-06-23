@@ -6,16 +6,12 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 import streamlit_app as estimator_ui
-from app.schemas.request_form import (
-    DetailLevel,
-    EstimationResponse,
-    OutputFormat,
-    ProjectType,
-    ReferenceProject,
-)
+from app.schemas.session import SessionEstimationResponse
+from app.sessions import ProjectMetadata
+from app.ui import streamlit_helpers
 
 STREAMLIT_APP = Path(__file__).resolve().parents[1] / "streamlit_app.py"
-VALID_DESCRIPTION = (
+VALID_TRANSCRIPT = (
     "We need a small CRM with auth, contacts and roles. MVP in six weeks."
 )
 
@@ -25,7 +21,12 @@ def _load_app() -> AppTest:
 
 
 @pytest.fixture
-def loaded_app(openai_settings: None) -> AppTest:
+def loaded_app(openai_settings: None, monkeypatch: pytest.MonkeyPatch) -> AppTest:
+    monkeypatch.setattr(
+        streamlit_helpers,
+        "create_session",
+        lambda api_base: "test-session-id",
+    )
     app = _load_app()
     app.run()
     return app
@@ -35,111 +36,15 @@ def test_streamlit_app_module_is_importable_without_side_effects() -> None:
     assert callable(estimator_ui.main)
     assert callable(estimator_ui.bootstrap)
     assert callable(estimator_ui.render_sidebar)
-    assert callable(estimator_ui.render_form)
-    assert callable(estimator_ui.build_estimation_request)
-    assert estimator_ui._enum_label(estimator_ui.ProjectType.WEB_SAAS) == "Web Saas"
-
-
-def test_build_estimation_request_without_reference_projects() -> None:
-    request = estimator_ui.build_estimation_request(
-        description=VALID_DESCRIPTION,
-        project_type=ProjectType.WEB_SAAS,
-        detail_level=DetailLevel.MEDIUM,
-        output_format=OutputFormat.PHASES_TABLE,
-        include_reference_projects=False,
-        prompt_version="v1",
-    )
-    assert request.reference_projects is None
-
-
-def test_build_estimation_request_with_reference_projects(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    sample = [
-        ReferenceProject(
-            name="Example 1 — Multi-tenant Subscription Billing SaaS",
-            scope_summary="Billing SaaS scope",
-            body="Billing SaaS body",
-            project_type=ProjectType.WEB_SAAS,
-        )
-    ]
-    monkeypatch.setattr(estimator_ui, "resolve_reference_projects", lambda **kwargs: sample)
-    request = estimator_ui.build_estimation_request(
-        description=VALID_DESCRIPTION,
-        project_type=ProjectType.WEB_SAAS,
-        detail_level=DetailLevel.MEDIUM,
-        output_format=OutputFormat.PHASES_TABLE,
-        include_reference_projects=True,
-        prompt_version="v1",
-    )
-    assert request.reference_projects == sample
-
-
-def test_form_posts_reference_projects_when_checkbox_enabled(
-    loaded_app: AppTest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    posted: list[dict] = []
-    sample = [
-        ReferenceProject(
-            name="Example 1 — Multi-tenant Subscription Billing SaaS",
-            scope_summary="Billing SaaS scope",
-            body="Billing SaaS body",
-            project_type=ProjectType.WEB_SAAS,
-        )
-    ]
-
-    def fake_post(url: str, **kwargs) -> httpx.Response:
-        posted.append(kwargs)
-        return httpx.Response(
-            200,
-            json={"text": "## Estimate\n\nTotal: 120 hours", "prompt_version": "v1"},
-            request=httpx.Request("POST", url),
-        )
-
-    monkeypatch.setattr(
-        "app.prompts.examples_catalog.resolve_reference_projects",
-        lambda **kwargs: sample,
-    )
-    monkeypatch.setattr(estimator_ui.httpx, "post", fake_post)
-
-    loaded_app.text_area[0].set_value(VALID_DESCRIPTION)
-    loaded_app.checkbox[0].check()
-    loaded_app.button[0].click().run()
-
-    assert not loaded_app.exception
-    assert posted[0]["json"]["reference_projects"] == [
-        project.model_dump(mode="json") for project in sample
-    ]
-
-
-def test_form_omits_reference_projects_when_checkbox_disabled(
-    loaded_app: AppTest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    posted: list[dict] = []
-
-    def fake_post(url: str, **kwargs) -> httpx.Response:
-        posted.append(kwargs)
-        return httpx.Response(
-            200,
-            json={"text": "## Estimate\n\nTotal: 120 hours", "prompt_version": "v1"},
-            request=httpx.Request("POST", url),
-        )
-
-    monkeypatch.setattr(estimator_ui.httpx, "post", fake_post)
-
-    loaded_app.text_area[0].set_value(VALID_DESCRIPTION)
-    loaded_app.button[0].click().run()
-
-    assert not loaded_app.exception
-    assert posted[0]["json"]["reference_projects"] is None
+    assert callable(estimator_ui.render_conversation)
 
 
 def test_streamlit_app_loads(loaded_app: AppTest) -> None:
     assert not loaded_app.exception
     assert loaded_app.title[0].value == "Software Estimator"
     assert loaded_app.sidebar.header[0].value == "Configuration"
-    assert loaded_app.text_area
-    assert loaded_app.session_state.prompt_version == "v1"
+    assert loaded_app.session_state.session_id == "test-session-id"
+    assert loaded_app.session_state.prompt_version == "v2"
 
 
 def test_bootstrap_shows_configuration_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -159,114 +64,156 @@ def test_bootstrap_shows_configuration_error(monkeypatch: pytest.MonkeyPatch) ->
     assert "LLM configuration error" in mock_st.error.call_args.args[0]
 
 
-def test_form_validation_error_on_short_description(loaded_app: AppTest) -> None:
+def test_bootstrap_stops_when_session_creation_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_st = MagicMock()
+    mock_st.stop.side_effect = StopIteration
+    mock_st.session_state = {}
+
+    monkeypatch.setattr(estimator_ui, "st", mock_st)
+    monkeypatch.setattr(
+        streamlit_helpers,
+        "ensure_session_id",
+        MagicMock(side_effect=httpx.ConnectError("refused", request=MagicMock())),
+    )
+
+    with pytest.raises(StopIteration):
+        estimator_ui.bootstrap()
+
+    assert "Could not create session" in mock_st.error.call_args.args[0]
+
+
+def test_conversation_validation_error_on_short_transcript(loaded_app: AppTest) -> None:
     loaded_app.text_area[0].set_value("too short")
     loaded_app.button[0].click().run()
 
     assert not loaded_app.exception
     assert loaded_app.error
-    assert "description" in loaded_app.error[0].value.lower()
+    assert "20 characters" in loaded_app.error[0].value
 
 
-def test_form_success_renders_estimation(
+def test_conversation_success_renders_estimation(
     loaded_app: AppTest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    response = httpx.Response(
-        200,
-        json={"text": "## Estimate\n\nTotal: 120 hours", "prompt_version": "v1"},
-        request=httpx.Request("POST", estimator_ui.API_ESTIMATE_URL),
+    monkeypatch.setattr(
+        streamlit_helpers,
+        "submit_session_estimate",
+        lambda *args, **kwargs: SessionEstimationResponse(
+            text="## Estimate\n\nTotal: 120 hours",
+            prompt_version="v2",
+            project_metadata=ProjectMetadata(),
+        ),
     )
-    monkeypatch.setattr(estimator_ui.httpx, "post", lambda *args, **kwargs: response)
 
-    loaded_app.text_area[0].set_value(VALID_DESCRIPTION)
+    loaded_app.text_area[0].set_value(VALID_TRANSCRIPT)
     loaded_app.button[0].click().run()
 
     assert not loaded_app.exception
     assert loaded_app.session_state.last_estimation is not None
-    assert loaded_app.markdown
     assert "Total: 120 hours" in loaded_app.markdown[-1].value
 
 
-def test_form_posts_selected_prompt_version(
+def test_conversation_updates_project_metadata(
     loaded_app: AppTest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    posted: list[dict] = []
-
-    def fake_post(url: str, **kwargs) -> httpx.Response:
-        posted.append({"url": url, **kwargs})
-        return httpx.Response(
-            200,
-            json={"text": "## Estimate\n\nTotal: 120 hours", "prompt_version": "v2"},
-            request=httpx.Request("POST", url),
-        )
-
-    monkeypatch.setattr(estimator_ui.httpx, "post", fake_post)
-
-    loaded_app.session_state.prompt_version = "v2"
-    loaded_app.text_area[0].set_value(VALID_DESCRIPTION)
-    loaded_app.button[0].click().run()
-
-    assert not loaded_app.exception
-    assert posted[0]["params"] == {"prompt_version": "v2"}
-    assert loaded_app.session_state.last_estimation.prompt_version == "v2"
-
-
-def test_form_http_status_error(
-    loaded_app: AppTest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    request = httpx.Request("POST", estimator_ui.API_ESTIMATE_URL)
-    response = httpx.Response(500, text="internal error", request=request)
     monkeypatch.setattr(
-        estimator_ui.httpx,
-        "post",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            httpx.HTTPStatusError("error", request=request, response=response)
+        streamlit_helpers,
+        "submit_session_estimate",
+        lambda *args, **kwargs: SessionEstimationResponse(
+            text="## Estimate",
+            prompt_version="v2",
+            project_metadata=ProjectMetadata(project_name="BookFlow"),
         ),
     )
 
-    loaded_app.text_area[0].set_value(VALID_DESCRIPTION)
+    loaded_app.text_area[0].set_value(VALID_TRANSCRIPT)
+    loaded_app.button[0].click().run()
+
+    assert loaded_app.session_state.project_metadata["project_name"] == "BookFlow"
+
+
+def test_conversation_http_status_error(
+    loaded_app: AppTest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request = httpx.Request("POST", "http://localhost:8000/sessions/x/estimate")
+    response = httpx.Response(500, text="internal error", request=request)
+
+    def boom(*args, **kwargs):
+        raise httpx.HTTPStatusError("error", request=request, response=response)
+
+    monkeypatch.setattr(streamlit_helpers, "submit_session_estimate", boom)
+
+    loaded_app.text_area[0].set_value(VALID_TRANSCRIPT)
     loaded_app.button[0].click().run()
 
     assert loaded_app.error
     assert "Estimation failed (500)" in loaded_app.error[0].value
 
 
-def test_form_request_error(loaded_app: AppTest, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_conversation_request_error(
+    loaded_app: AppTest, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
-        estimator_ui.httpx,
-        "post",
+        streamlit_helpers,
+        "submit_session_estimate",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             httpx.ConnectError("connection refused", request=MagicMock())
         ),
     )
 
-    loaded_app.text_area[0].set_value(VALID_DESCRIPTION)
+    loaded_app.text_area[0].set_value(VALID_TRANSCRIPT)
     loaded_app.button[0].click().run()
 
     assert loaded_app.error
     assert "Could not reach API" in loaded_app.error[0].value
 
 
-def test_form_invalid_api_response(
+def test_new_conversation_resets_session_state(
     loaded_app: AppTest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    response = httpx.Response(
-        200,
-        json={"unexpected": "shape"},
-        request=httpx.Request("POST", estimator_ui.API_ESTIMATE_URL),
+    loaded_app.session_state.project_metadata = {"project_name": "BookFlow"}
+    loaded_app.session_state.last_estimation = SessionEstimationResponse(
+        text="saved",
+        prompt_version="v2",
+        project_metadata=ProjectMetadata(project_name="BookFlow"),
     )
-    monkeypatch.setattr(estimator_ui.httpx, "post", lambda *args, **kwargs: response)
 
-    loaded_app.text_area[0].set_value(VALID_DESCRIPTION)
-    loaded_app.button[0].click().run()
+    monkeypatch.setattr(
+        streamlit_helpers,
+        "create_session",
+        lambda api_base: "fresh-session-id",
+    )
+
+    loaded_app.sidebar.button[0].click().run()
+
+    assert not loaded_app.exception
+    assert loaded_app.session_state.session_id == "fresh-session-id"
+    assert loaded_app.session_state.project_metadata["project_name"] is None
+    assert loaded_app.session_state.last_estimation is None
+
+
+def test_new_conversation_shows_error_when_api_fails(
+    loaded_app: AppTest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(state, **kwargs):
+        raise httpx.ConnectError("refused", request=MagicMock())
+
+    monkeypatch.setattr(streamlit_helpers, "reset_conversation_state", boom)
+
+    loaded_app.sidebar.button[0].click().run()
 
     assert loaded_app.error
-    assert "Invalid API response" in loaded_app.error[0].value
+    assert "Could not start a new session" in loaded_app.error[0].value
 
 
-def test_render_form_displays_persisted_estimation(openai_settings: None) -> None:
-    persisted = EstimationResponse(text="## Saved estimate", prompt_version="v1")
+def test_render_conversation_displays_persisted_estimation(openai_settings: None) -> None:
+    persisted = SessionEstimationResponse(
+        text="## Saved estimate",
+        prompt_version="v2",
+        project_metadata=ProjectMetadata(),
+    )
     at = _load_app()
+    at.session_state["session_id"] = "existing-session"
+    at.session_state["project_metadata"] = persisted.project_metadata.model_dump()
     at.session_state["last_estimation"] = persisted
     at.run()
 
