@@ -3,10 +3,19 @@
 Content is migrated from ``estimation/<version>/examples.j2``. Few-shot rendering
 still uses the Jinja templates directly; this module powers the optional
 ``reference_projects`` field resolved by ``project_type``.
+
+Project-type tags (applied during migration from examples.j2):
+
+- **MOBILE_APP** — field service, courier dispatch, barcode scanner apps
+- **WEB_SAAS** — landing pages, marketplaces, SaaS billing, APIs, PWAs
+- **INTERNAL_TOOL** — onboarding, portals, notifier/routers, hospital boards
+- **DATA_PIPELINE** — analytics pipelines, IoT/monitoring dashboards
 """
 
 from dataclasses import dataclass
 
+from app.prompts.catalog_data_v1 import V1_CATALOG_RAW
+from app.prompts.catalog_data_v2 import V2_CATALOG_RAW
 from app.schemas.request_form import (
     DetailLevel,
     OutputFormat,
@@ -23,13 +32,24 @@ class CatalogEntry:
     projects: list[ReferenceProject]
 
 
-# Per-version few-shot branches — populated by migrating examples.j2 content.
-V1_CATALOG: list[CatalogEntry] = []
-V2_CATALOG: list[CatalogEntry] = []
+def _build_catalog(
+    raw: list[tuple[OutputFormat, DetailLevel, list[ReferenceProject]]],
+) -> list[CatalogEntry]:
+    return [
+        CatalogEntry(output_format=fmt, detail_level=level, projects=projects)
+        for fmt, level, projects in raw
+    ]
 
-# Flat indexes used by resolve_reference_projects to match on project_type.
-V1_ALL_PROJECTS: list[ReferenceProject] = []
-V2_ALL_PROJECTS: list[ReferenceProject] = []
+
+V1_CATALOG: list[CatalogEntry] = _build_catalog(V1_CATALOG_RAW)
+V2_CATALOG: list[CatalogEntry] = _build_catalog(V2_CATALOG_RAW)
+
+V1_ALL_PROJECTS: list[ReferenceProject] = [
+    project for entry in V1_CATALOG for project in entry.projects
+]
+V2_ALL_PROJECTS: list[ReferenceProject] = [
+    project for entry in V2_CATALOG for project in entry.projects
+]
 
 _CATALOG_BY_VERSION: dict[str, list[CatalogEntry]] = {
     "v1": V1_CATALOG,
