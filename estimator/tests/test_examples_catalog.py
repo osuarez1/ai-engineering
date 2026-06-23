@@ -1,7 +1,9 @@
+import pytest
+
+from app.prompts import examples_catalog
 from app.prompts.examples_catalog import (
-    CatalogEntry,
     V1_ALL_PROJECTS,
-    V1_CATALOG,
+    V2_ALL_PROJECTS,
     few_shot_project_names,
     resolve_reference_projects,
 )
@@ -14,31 +16,21 @@ from app.schemas.request_form import (
 
 
 def test_few_shot_project_names_returns_names_for_matching_branch() -> None:
-    project = ReferenceProject(
-        name="Example 1 — Field Service Mobile App",
-        scope_summary="Cross-platform mobile app for HVAC technicians.",
-        body="**Totals:** 176 hours",
-        project_type=ProjectType.MOBILE_APP,
+    names = few_shot_project_names(
+        version="v1",
+        output_format=OutputFormat.PHASES_TABLE,
+        detail_level=DetailLevel.MEDIUM,
     )
-    V1_CATALOG.append(
-        CatalogEntry(
-            output_format=OutputFormat.PHASES_TABLE,
-            detail_level=DetailLevel.MEDIUM,
-            projects=[project],
-        )
-    )
-    try:
-        names = few_shot_project_names(
-            version="v1",
-            output_format=OutputFormat.PHASES_TABLE,
-            detail_level=DetailLevel.MEDIUM,
-        )
-        assert names == {project.name}
-    finally:
-        V1_CATALOG.clear()
+    assert names == {
+        "Example 1 — Field Service Mobile App",
+        "Example 2 — Retail Sales Analytics Pipeline",
+    }
 
 
-def test_few_shot_project_names_returns_empty_for_unknown_combo() -> None:
+def test_few_shot_project_names_returns_empty_for_unknown_combo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(examples_catalog._CATALOG_BY_VERSION, "v1", [])
     assert (
         few_shot_project_names(
             version="v1",
@@ -50,62 +42,77 @@ def test_few_shot_project_names_returns_empty_for_unknown_combo() -> None:
 
 
 def test_resolve_reference_projects_filters_by_type_and_excludes_few_shot() -> None:
-    few_shot = ReferenceProject(
-        name="Example 1 — Field Service Mobile App",
-        scope_summary="Few-shot scope",
-        body="Few-shot body",
+    resolved = resolve_reference_projects(
+        version="v1",
         project_type=ProjectType.MOBILE_APP,
+        output_format=OutputFormat.PHASES_TABLE,
+        detail_level=DetailLevel.MEDIUM,
     )
-    similar = ReferenceProject(
-        name="Example 1 — Warehouse Barcode Scanner App",
-        scope_summary="Warehouse scanning scope",
-        body="Warehouse scanning body",
-        project_type=ProjectType.MOBILE_APP,
+    assert resolved
+    assert all(project.project_type == ProjectType.MOBILE_APP for project in resolved)
+    assert "Example 1 — Field Service Mobile App" not in {p.name for p in resolved}
+    assert "Example 1 — Warehouse Barcode Scanner App" in {p.name for p in resolved}
+
+
+def test_resolve_reference_projects_matches_project_type_only() -> None:
+    resolved = resolve_reference_projects(
+        version="v1",
+        project_type=ProjectType.DATA_PIPELINE,
+        output_format=OutputFormat.PHASES_TABLE,
+        detail_level=DetailLevel.SUMMARY,
     )
-    other_type = ReferenceProject(
-        name="Example 1 — Employee Onboarding Internal Tool",
-        scope_summary="Onboarding scope",
-        body="Onboarding body",
-        project_type=ProjectType.INTERNAL_TOOL,
-    )
-    V1_CATALOG.append(
-        CatalogEntry(
-            output_format=OutputFormat.PHASES_TABLE,
-            detail_level=DetailLevel.MEDIUM,
-            projects=[few_shot],
-        )
-    )
-    V1_ALL_PROJECTS.extend([few_shot, similar, other_type])
-    try:
-        resolved = resolve_reference_projects(
-            version="v1",
-            project_type=ProjectType.MOBILE_APP,
-            output_format=OutputFormat.PHASES_TABLE,
-            detail_level=DetailLevel.MEDIUM,
-        )
-        assert resolved == [similar]
-    finally:
-        V1_CATALOG.clear()
-        V1_ALL_PROJECTS.clear()
+    assert resolved
+    assert all(project.project_type == ProjectType.DATA_PIPELINE for project in resolved)
+    assert "Example 2 — Retail Sales Analytics Pipeline" in {p.name for p in resolved}
 
 
 def test_resolve_reference_projects_uses_v2_catalog_for_non_v1_version() -> None:
-    from app.prompts import examples_catalog
-
-    project = ReferenceProject(
-        name="Example 1 — Courier Dispatch Mobile App",
-        scope_summary="Courier app scope",
-        body="Courier app body",
+    resolved = resolve_reference_projects(
+        version="v2",
         project_type=ProjectType.MOBILE_APP,
+        output_format=OutputFormat.PHASES_TABLE,
+        detail_level=DetailLevel.SUMMARY,
     )
-    examples_catalog.V2_ALL_PROJECTS.append(project)
-    try:
-        resolved = resolve_reference_projects(
-            version="v2",
-            project_type=ProjectType.MOBILE_APP,
+    assert resolved == [
+        p for p in V2_ALL_PROJECTS if p.project_type == ProjectType.MOBILE_APP
+    ][:3]
+    assert resolved[0].name == "Example 1 — Courier Dispatch Mobile App"
+
+
+def test_resolve_reference_projects_returns_empty_when_no_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(examples_catalog, "V1_ALL_PROJECTS", [])
+    assert (
+        resolve_reference_projects(
+            version="v1",
+            project_type=ProjectType.WEB_SAAS,
             output_format=OutputFormat.PHASES_TABLE,
             detail_level=DetailLevel.MEDIUM,
         )
-        assert resolved == [project]
+        == []
+    )
+
+
+def test_resolve_reference_projects_caps_results_at_three() -> None:
+    extras = [
+        ReferenceProject(
+            name=f"Example 99 — Extra Web SaaS {index}",
+            scope_summary="Extra scope",
+            body="Extra body",
+            project_type=ProjectType.WEB_SAAS,
+        )
+        for index in range(5)
+    ]
+    V1_ALL_PROJECTS.extend(extras)
+    try:
+        resolved = resolve_reference_projects(
+            version="v1",
+            project_type=ProjectType.WEB_SAAS,
+            output_format=OutputFormat.PHASES_TABLE,
+            detail_level=DetailLevel.SUMMARY,
+        )
+        assert len(resolved) == 3
     finally:
-        examples_catalog.V2_ALL_PROJECTS.clear()
+        for extra in extras:
+            V1_ALL_PROJECTS.remove(extra)
