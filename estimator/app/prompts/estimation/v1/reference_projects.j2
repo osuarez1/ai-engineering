@@ -1,0 +1,9 @@
+{% for ref in reference_projects %}
+### {{ ref.name }}
+
+**Scope:** {{ ref.scope_summary }}
+
+{{ ref.body }}
+
+---
+{% endfor %}
