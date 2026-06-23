@@ -1,0 +1,24 @@
+{% if project_metadata and (
+    project_metadata.project_name
+    or project_metadata.assumed_team_size
+    or project_metadata.mentioned_technologies
+    or project_metadata.agreed_scope
+) %}
+<project_metadata>
+{% if project_metadata.project_name %}
+Project name: {{ project_metadata.project_name }}
+{% endif %}
+{% if project_metadata.assumed_team_size %}
+Assumed team size: {{ project_metadata.assumed_team_size }} full-time engineers
+{% endif %}
+{% if project_metadata.mentioned_technologies %}
+Technologies mentioned: {{ project_metadata.mentioned_technologies | join(", ") }}
+{% endif %}
+{% if project_metadata.agreed_scope %}
+Agreed scope: {{ project_metadata.agreed_scope }}
+{% endif %}
+</project_metadata>
+
+Treat the project_metadata above as established facts about the ongoing project.
+Do not contradict them unless the user explicitly revises them in the current turn.
+{% endif %}
