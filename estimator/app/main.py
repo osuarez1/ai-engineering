@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.logging import configure_logging
-from app.routers import estimations
+from app.routers import estimations, sessions
 
 
 @asynccontextmanager
@@ -38,6 +38,7 @@ app.add_middleware(
 )
 
 app.include_router(estimations.router)
+app.include_router(sessions.router)
 
 
 @app.get("/health")
