@@ -1,12 +1,17 @@
 import pytest
 
-from app.prompts.loader import render_estimation_prompt
+from app.prompts.loader import (
+    render_estimation_prompt,
+    render_session_system_prompt,
+    render_session_user_prompt,
+)
 from app.schemas.request_form import (
     DetailLevel,
     EstimationRequest,
     OutputFormat,
     ProjectType,
 )
+from app.sessions import ProjectMetadata
 
 REQUEST = EstimationRequest(
     description="We need a small CRM with auth, contacts and roles. MVP in six weeks.",
@@ -32,3 +37,30 @@ def test_render_estimation_prompt_v2() -> None:
 def test_unknown_prompt_version_raises() -> None:
     with pytest.raises(ValueError, match="Unknown prompt version: missing"):
         render_estimation_prompt(REQUEST, version="missing")
+
+
+def test_render_session_system_prompt_includes_project_metadata() -> None:
+    metadata = ProjectMetadata(
+        project_name="BookFlow",
+        assumed_team_size=3,
+        mentioned_technologies=["Rails", "React"],
+        agreed_scope="MVP with auth and contacts",
+    )
+    system = render_session_system_prompt(REQUEST, metadata, version="v2")
+    assert "<project_metadata>" in system
+    assert "Project name: BookFlow" in system
+    assert "Assumed team size: 3 full-time engineers" in system
+    assert "Technologies mentioned: Rails, React" in system
+    assert "Agreed scope: MVP with auth and contacts" in system
+    assert "established facts" in system
+
+
+def test_render_session_system_prompt_omits_empty_metadata_block() -> None:
+    system = render_session_system_prompt(REQUEST, ProjectMetadata(), version="v2")
+    assert "<project_metadata>" not in system
+
+
+def test_render_session_user_prompt_v2() -> None:
+    user = render_session_user_prompt(REQUEST, version="v2")
+    assert REQUEST.description in user
+    assert "## Client brief" in user
