@@ -3,6 +3,8 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
+from app.prompts.examples_catalog import resolve_reference_projects
+from app.schemas.request_form import DetailLevel, OutputFormat, ProjectType
 from app.services import llm_service
 
 ESTIMATION_TEXT = "## Project estimate\n\nTotal: 120 hours · 7,500 EUR"
@@ -122,3 +124,26 @@ def test_unknown_prompt_version_returns_422(client: TestClient) -> None:
         json=DEFAULT_PAYLOAD,
     )
     assert response.status_code == 422
+
+
+def test_reference_projects_included_in_system_prompt(
+    client: TestClient, call_log: list[dict]
+) -> None:
+    reference_projects = resolve_reference_projects(
+        version="v1",
+        project_type=ProjectType.MOBILE_APP,
+        output_format=OutputFormat.PHASES_TABLE,
+        detail_level=DetailLevel.MEDIUM,
+    )
+    payload = {
+        **DEFAULT_PAYLOAD,
+        "project_type": "mobile_app",
+        "reference_projects": [project.model_dump(mode="json") for project in reference_projects],
+    }
+    response = client.post("/api/v1/estimate", json=payload)
+    assert response.status_code == 200
+
+    system_msg = call_log[0]["messages"][0]["content"]
+    assert "Similar completed projects" in system_msg
+    assert "Warehouse Barcode Scanner App" in system_msg
+    assert "Reference examples" not in system_msg
