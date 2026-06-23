@@ -44,7 +44,7 @@ def test_estimate_session_returns_estimation(
 ) -> None:
     monkeypatch.setattr(
         session_estimation,
-        "generate_estimation_from_request",
+        "generate_session_estimation",
         lambda *args, **kwargs: _fake_llm_result(),
     )
 
@@ -71,11 +71,11 @@ def test_estimate_session_with_docx_attachment(
 ) -> None:
     captured: list[str] = []
 
-    def fake_generate(request, *, version: str = "v2", opts=None) -> dict:
+    def fake_generate(request, project_metadata, *, version: str = "v2", opts=None) -> dict:
         captured.append(request.description)
         return _fake_llm_result()
 
-    monkeypatch.setattr(session_estimation, "generate_estimation_from_request", fake_generate)
+    monkeypatch.setattr(session_estimation, "generate_session_estimation", fake_generate)
 
     docx_bytes = _make_docx("Architecture requires PostgreSQL and Redis.")
     response = client.post(
@@ -121,6 +121,33 @@ def test_estimate_session_unsupported_attachment_returns_422(
     assert "Unsupported attachment type" in response.json()["detail"]
 
 
+def test_estimate_session_updates_project_metadata(
+    client: TestClient,
+    session_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        session_estimation,
+        "generate_session_estimation",
+        lambda *args, **kwargs: _fake_llm_result(),
+    )
+
+    transcript = (
+        "The project is called BookFlow. We need a CRM with auth and contacts. "
+        "Stack is Rails and React with PostgreSQL."
+    )
+    response = client.post(
+        f"/sessions/{session_id}/estimate",
+        data={"transcript": transcript},
+    )
+
+    assert response.status_code == 200
+    metadata = response.json()["project_metadata"]
+    assert metadata["project_name"] == "BookFlow"
+    assert "Rails" in metadata["mentioned_technologies"]
+    assert "React" in metadata["mentioned_technologies"]
+
+
 def test_estimate_session_llm_error_returns_500(
     client: TestClient,
     session_id: str,
@@ -129,7 +156,7 @@ def test_estimate_session_llm_error_returns_500(
     def boom(*args, **kwargs):
         raise LLMServiceError("provider unavailable")
 
-    monkeypatch.setattr(session_estimation, "generate_estimation_from_request", boom)
+    monkeypatch.setattr(session_estimation, "generate_session_estimation", boom)
 
     response = client.post(
         f"/sessions/{session_id}/estimate",
