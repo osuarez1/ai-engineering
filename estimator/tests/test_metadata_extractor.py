@@ -52,3 +52,12 @@ def test_update_metadata_no_changes_returns_same_object() -> None:
     original = ProjectMetadata()
     updated = update_metadata_heuristic(original, "short", "reply")
     assert updated is original
+
+
+def test_update_metadata_cleans_captured_project_name() -> None:
+    metadata = update_metadata_heuristic(
+        ProjectMetadata(),
+        "The project is called  BookFlow  and needs a web app.",
+        "Estimate for BookFlow.",
+    )
+    assert metadata.project_name == "BookFlow"
