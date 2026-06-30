@@ -143,7 +143,7 @@ flowchart LR
 - **Transport** — in-process (`TestClient`, default) or `--http` against a running API.
 - **Scenarios** — `evals/stress/scenarios.py` defines `growing`, `pivot`, and `contradiction` profiles with fact-trackers for memory-drift measurement.
 - **Metrics** — `evals/stress/metrics.py` consumes snapshot data and scenario trackers (`MemoryDriftMetric`, latency/cost budgets, attachment recall).
-- **Aggregation** — `evals/stress/aggregate.py` reads `results.csv` and writes `REPORT.md` (English) plus optional localized Spanish report.
+- **Aggregation** — `evals/stress/aggregate.py` reads `results.csv`, writes `localized/REPORT.en.md` and `localized/REPORT.es.md`, and copies the Spanish report to `REPORT.md` for the temporary course publish path.
 
 Mocked runs patch `generate_estimation_from_messages` for fast CI; `--real-llm --cache-on` exercises the full stack including cache hit rates.
 

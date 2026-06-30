@@ -43,7 +43,7 @@ uv run python -m evals.stress.run                              # mocked in-proce
 uv run python -m evals.stress.run --real-llm --cache-on        # real LLM in-process
 uv run python -m evals.stress.run --http http://localhost:8000  # against running API
 
-# Regenerate REPORT.md from results.csv
+# Regenerate localized reports from results.csv (Spanish copied to REPORT.md)
 uv run python -m evals.stress.aggregate --run-mode "in-process (real LLM)" --cache-on
 ```
 

@@ -176,11 +176,11 @@ uv run python -m evals.stress.run --real-llm --cache-on
 # Against a running API
 uv run python -m evals.stress.run --http http://localhost:8000
 
-# Regenerate REPORT.md from results.csv
+# Regenerate localized reports from results.csv (Spanish copied to REPORT.md)
 uv run python -m evals.stress.aggregate --run-mode "in-process (real LLM)" --cache-on
 ```
 
-The runner writes `evals/stress/results.csv` (tracked). Each turn reads `GET /sessions/{id}` after the estimate to obtain real `last_turn_observed` — see [docs/ARCHITECTURE.md#session-snapshot-and-observation](docs/ARCHITECTURE.md#session-snapshot-and-observation). Spanish reports, backups, and local logs are gitignored.
+The runner writes `evals/stress/results.csv` (tracked). Each turn reads `GET /sessions/{id}` after the estimate to obtain real `last_turn_observed` — see [docs/ARCHITECTURE.md#session-snapshot-and-observation](docs/ARCHITECTURE.md#session-snapshot-and-observation). Localized reports live under `evals/stress/localized/` (`REPORT.en.md`, `REPORT.es.md`); `REPORT.md` at the stress root is temporarily a Spanish publish copy. Backups and run logs are gitignored.
 
 ## Try the service
 
@@ -266,7 +266,9 @@ estimator/
 │   │   └── estimation/v1|v2/      # system.j2, user.j2, examples.j2
 │   ├── ui/streamlit_helpers.py    # Pure HTTP helpers for session client
 │   └── fixtures/                  # Sample transcriptions (fixtures only)
-├── evals/stress/                  # Runner, metrics, aggregator, REPORT.md (6.1)
+├── evals/stress/                  # Runner, metrics, aggregator (6.1)
+│   ├── localized/                 # REPORT.en.md, REPORT.es.md
+│   └── REPORT.md                  # Published copy (Spanish, temporary)
 ├── docs/ARCHITECTURE.md           # Architecture flows (form vs multi-turn session)
 ├── streamlit_app.py               # Conversational UI (HTTP session client)
 ├── tests/                         # pytest + AppTest
