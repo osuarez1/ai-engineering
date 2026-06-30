@@ -1,0 +1,10 @@
+{% if anchors %}
+<session_anchors>
+{% for anchor in anchors %}
+- {{ anchor }}
+{% endfor %}
+</session_anchors>
+
+Treat the anchors above as pinned decisions and constraints for this project.
+Do not contradict them unless the user explicitly revises them in the current turn.
+{% endif %}
