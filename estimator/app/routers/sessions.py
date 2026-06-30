@@ -5,7 +5,11 @@ from typing import Literal
 import structlog
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 
-from app.schemas.session import SessionCreateResponse, SessionEstimationResponse
+from app.schemas.session import (
+    SessionCreateResponse,
+    SessionEstimationResponse,
+    SessionSnapshotResponse,
+)
 from app.services.attachments import (
     UnsupportedAttachmentError,
     collect_attachment_payloads,
@@ -31,6 +35,28 @@ async def create_session() -> SessionCreateResponse:
     session = session_store.create()
     log.info("session_created", session_id=session.session_id)
     return SessionCreateResponse(session_id=session.session_id)
+
+
+@router.get("/{session_id}", response_model=SessionSnapshotResponse)
+async def get_session_snapshot(session_id: str) -> SessionSnapshotResponse:
+    """Return session memory state for stress-test observation and metrics."""
+    try:
+        session = session_store.get_or_raise(session_id)
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail="Session not found") from None
+
+    return SessionSnapshotResponse(
+        session_id=session.session_id,
+        message_count=len(session.history.messages),
+        anchors_count=len(session.anchors),
+        anchors=list(session.anchors),
+        summary_chars=len(session.summary),
+        summary=session.summary,
+        last_resolved_tier=session.last_resolved_tier,
+        last_tier_rule=session.last_tier_rule,
+        project_metadata=session.project_metadata,
+        last_turn_observed=session.last_turn_observed,
+    )
 
 
 @router.post("/{session_id}/estimate", response_model=SessionEstimationResponse)
