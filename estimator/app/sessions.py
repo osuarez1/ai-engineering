@@ -90,6 +90,12 @@ class Session:
         self.session_id = session_id or str(uuid4())
         self.history = ConversationHistory()
         self.project_metadata = ProjectMetadata()
+        self.anchors: list[str] = []
+        self.summary: str = ""
+        self.turn_index: int = 0
+        self.last_resolved_tier: str = ""
+        self.last_tier_rule: str = ""
+        self.last_turn_observed: dict | None = None
         now = datetime.now(UTC)
         self.created_at = now
         self.updated_at = now
