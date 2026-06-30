@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import httpx
 
+from evals.stress.backup import backup_results_csv
 from evals.stress.fixtures.build_pdfs import (
     ATTACHMENT_SIZES_KB,
     attachment_pdf_path,
@@ -434,6 +435,7 @@ async def run_stress(config: RunConfig, transport: StressTransport) -> list[dict
 
 
 def write_csv(output_path: Path, rows: Sequence[dict[str, Any]]) -> None:
+    backup_results_csv(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(CSV_COLUMNS))
@@ -456,8 +458,7 @@ async def _ensure_http_server_reachable(client: httpx.AsyncClient, base_url: str
         ) from exc
     except httpx.HTTPStatusError as exc:
         raise SystemExit(
-            f"Health check failed at {base_url.rstrip('/')}/health: "
-            f"HTTP {exc.response.status_code}"
+            f"Health check failed at {base_url.rstrip('/')}/health: HTTP {exc.response.status_code}"
         ) from exc
 
 
