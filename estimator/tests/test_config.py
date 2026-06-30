@@ -42,3 +42,15 @@ def test_max_conversation_turns_default() -> None:
         OPENAI_API_KEY="sk-test",
     )
     assert settings.MAX_CONVERSATION_TURNS == 6
+
+
+def test_stress_test_config_defaults() -> None:
+    settings = Settings(
+        LLM_PROVIDER="openai",
+        OPENAI_API_KEY="sk-test",
+    )
+    assert settings.MAX_ATTACHMENT_CHARS == 60_000
+    assert settings.LLM_CACHE_ENABLED is True
+    assert settings.SEMANTIC_CACHE_THRESHOLD == 0.85
+    assert settings.TIER_MEDIUM_CHARS == 8_000
+    assert settings.TIER_HIGH_CHARS == 20_000

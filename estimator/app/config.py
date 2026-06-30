@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     APP_ENV: Literal["development", "staging", "production"] = "development"
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "DEBUG"
     MAX_CONVERSATION_TURNS: int = 6
+    MAX_ATTACHMENT_CHARS: int = 60_000
+    LLM_CACHE_ENABLED: bool = True
+    SEMANTIC_CACHE_THRESHOLD: float = 0.85
+    TIER_MEDIUM_CHARS: int = 8_000
+    TIER_HIGH_CHARS: int = 20_000
 
     @model_validator(mode="after")
     def validate_api_key_for_provider(self) -> "Settings":
