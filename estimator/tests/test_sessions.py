@@ -104,5 +104,32 @@ def test_session_touch_updates_timestamp() -> None:
     assert session.updated_at >= before
 
 
+def test_session_memory_fields_default_empty() -> None:
+    session = Session()
+    assert session.anchors == []
+    assert session.summary == ""
+    assert session.turn_index == 0
+    assert session.last_resolved_tier == ""
+    assert session.last_tier_rule == ""
+    assert session.last_turn_observed is None
+
+
+def test_session_memory_fields_are_mutable() -> None:
+    session = Session()
+    session.anchors.append("budget 30000 EUR")
+    session.summary = "CRM with auth and roles."
+    session.turn_index = 3
+    session.last_resolved_tier = "medium"
+    session.last_tier_rule = "enriched_transcript_chars>=8000"
+    session.last_turn_observed = {"turn_index": 3, "cost_usd": 0.01}
+
+    assert session.anchors == ["budget 30000 EUR"]
+    assert session.summary == "CRM with auth and roles."
+    assert session.turn_index == 3
+    assert session.last_resolved_tier == "medium"
+    assert session.last_tier_rule == "enriched_transcript_chars>=8000"
+    assert session.last_turn_observed == {"turn_index": 3, "cost_usd": 0.01}
+
+
 def test_module_level_session_store_is_singleton() -> None:
     assert isinstance(session_store, SessionStore)
