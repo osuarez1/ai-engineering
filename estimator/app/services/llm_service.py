@@ -12,6 +12,8 @@ from dataclasses import dataclass
 import structlog
 
 from app.config import get_settings
+from app.services.llm_cache import lookup as lookup_llm_cache
+from app.services.llm_cache import store as store_llm_cache
 from app.services.llm_wrapper import compute_cost_usd
 from app.prompts.loader import (
     render_estimation_prompt,
@@ -114,12 +116,19 @@ def generate_estimation_from_messages(
     )
 
     try:
-        result = _dispatch_llm(
-            messages,
-            model=model,
-            max_tokens=opts.max_tokens,
-            thinking_budget=opts.thinking_budget,
-        )
+        cached, cache_hit_kind = lookup_llm_cache(model, messages)
+        if cached is not None:
+            result = cached
+            latency_ms = 0
+        else:
+            result = _dispatch_llm(
+                messages,
+                model=model,
+                max_tokens=opts.max_tokens,
+                thinking_budget=opts.thinking_budget,
+            )
+            store_llm_cache(model, messages, result)
+            latency_ms = int((time.perf_counter() - t0) * 1000)
     except LLMServiceError:
         raise
     except Exception as exc:
@@ -133,8 +142,9 @@ def generate_estimation_from_messages(
         "provider": result["provider"],
         "usage": result["usage"],
         "finish_reason": result["finish_reason"],
-        "latency_ms": int((time.perf_counter() - t0) * 1000),
+        "latency_ms": latency_ms,
         "cost_usd": compute_cost_usd(result["model"], result["usage"]),
+        "cache_hit_kind": cache_hit_kind,
     }
 
 

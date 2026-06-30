@@ -379,7 +379,33 @@ def test_generate_estimation_from_messages_multiturn_openai(
 
     assert result["provider"] == "openai"
     assert result["cost_usd"] == 0.0
+    assert result["cache_hit_kind"] == "none"
     assert len(captured[0]) == 4
+
+
+def test_generate_estimation_from_messages_exact_cache_hit(
+    monkeypatch: pytest.MonkeyPatch, openai_settings: None
+) -> None:
+    call_count = 0
+
+    def fake_openai(messages, model, max_tokens):
+        nonlocal call_count
+        call_count += 1
+        return _provider_result("openai")
+
+    monkeypatch.setattr(llm_service, "_call_openai", fake_openai)
+
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "turn"},
+    ]
+    first = generate_estimation_from_messages(messages, version="v2")
+    second = generate_estimation_from_messages(messages, version="v2")
+
+    assert call_count == 1
+    assert first["cache_hit_kind"] == "none"
+    assert second["cache_hit_kind"] == "exact"
+    assert second["latency_ms"] == 0
 
 
 def test_generate_estimation_from_messages_requires_system_message(
