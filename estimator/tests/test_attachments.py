@@ -7,6 +7,7 @@ from pypdf import PdfWriter
 from app.services.attachments import (
     ATTACHMENT_SEPARATOR,
     UnsupportedAttachmentError,
+    attachments_total_chars,
     collect_attachment_payloads,
     enrich_transcript,
     extract_attachment_text,
@@ -122,6 +123,28 @@ def test_enrich_transcript_skips_attachment_when_budget_exhausted(
     assert enriched.count(ATTACHMENT_SEPARATOR.format(filename="second.pdf")) == 1
     assert "abcde" in enriched
     assert "fghij" not in enriched
+
+
+def test_attachments_total_chars_matches_enriched_attachment_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.attachments.get_settings",
+        lambda: type("S", (), {"MAX_ATTACHMENT_CHARS": 10})(),
+    )
+    monkeypatch.setattr(
+        "app.services.attachments.extract_attachment_text",
+        lambda _filename, _content: "x" * 20,
+    )
+    files = [("big.pdf", b"%PDF")]
+    assert attachments_total_chars(files) == 10
+    enriched = enrich_transcript("Base transcript.", files)
+    assert enriched.startswith("Base transcript.")
+    assert "x" * 10 in enriched
+
+
+def test_attachments_total_chars_zero_without_files() -> None:
+    assert attachments_total_chars([]) == 0
 
 
 @pytest.mark.asyncio

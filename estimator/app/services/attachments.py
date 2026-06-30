@@ -38,13 +38,10 @@ def extract_attachment_text(filename: str, content: bytes) -> str:
     )
 
 
-def enrich_transcript(transcript: str, files: list[tuple[str, bytes]]) -> str:
-    """Append extracted attachment text to the transcript with clear separators."""
-    if not files:
-        return transcript
-
+def _attachment_blocks(files: list[tuple[str, bytes]]) -> tuple[list[str], int]:
+    """Build separator + text blocks for attachments; return blocks and char count."""
     max_chars = get_settings().MAX_ATTACHMENT_CHARS
-    blocks = [transcript]
+    blocks: list[str] = []
     attachment_chars = 0
     for filename, content in files:
         extracted = extract_attachment_text(filename, content)
@@ -56,7 +53,24 @@ def enrich_transcript(transcript: str, files: list[tuple[str, bytes]]) -> str:
         attachment_chars += len(extracted)
         blocks.append(ATTACHMENT_SEPARATOR.format(filename=filename))
         blocks.append(extracted)
-    return "\n\n".join(blocks)
+    return blocks, attachment_chars
+
+
+def attachments_total_chars(files: list[tuple[str, bytes]]) -> int:
+    """Return the number of attachment characters included after truncation."""
+    if not files:
+        return 0
+    _, count = _attachment_blocks(files)
+    return count
+
+
+def enrich_transcript(transcript: str, files: list[tuple[str, bytes]]) -> str:
+    """Append extracted attachment text to the transcript with clear separators."""
+    if not files:
+        return transcript
+
+    attachment_blocks, _ = _attachment_blocks(files)
+    return "\n\n".join([transcript, *attachment_blocks])
 
 
 def _extract_pdf(content: bytes) -> str:
