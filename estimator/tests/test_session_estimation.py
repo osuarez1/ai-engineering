@@ -109,6 +109,8 @@ def test_run_session_estimation_appends_history_and_updates_metadata(
     assert len(session.history.messages) == 2
     assert "BookFlow" in session.history.messages[0].content
     assert session.project_metadata.project_name == "BookFlow"
+    assert "project is called BookFlow" in session.anchors
+    assert "BookFlow" in session.summary
     assert len(captured) == 1
     assert captured[0][0]["role"] == "system"
     assert "BookFlow" in captured[0][-1]["content"]

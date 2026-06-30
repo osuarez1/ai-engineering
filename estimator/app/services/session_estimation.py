@@ -3,8 +3,10 @@
 from app.config import get_settings
 from app.prompts.loader import render_session_system_prompt, render_session_user_prompt
 from app.schemas.request_form import DetailLevel, EstimationRequest, OutputFormat, ProjectType
+from app.services.anchor_extractor import update_anchors
 from app.services.llm_service import generate_estimation_from_messages
 from app.services.metadata_extractor import update_metadata_heuristic
+from app.services.summarizer import update_summary
 from app.sessions import Session
 
 
@@ -84,6 +86,13 @@ def run_session_estimation(
         enriched_transcript,
         result["text"],
     )
+    session.anchors = update_anchors(
+        session.anchors,
+        enriched_transcript,
+        result["text"],
+        session.project_metadata,
+    )
+    session.summary = update_summary(session.summary, enriched_transcript, result["text"])
     session.history.add_turn(user_content_sent, result["text"])
     session.touch()
     return result
