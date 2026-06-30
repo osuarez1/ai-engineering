@@ -69,6 +69,8 @@ class RunConfig:
     output: Path
     http_base_url: str | None
     cache_on: bool
+    real_llm: bool
+    request_delay_ms: int
 
 
 class StressTransport(Protocol):
@@ -220,12 +222,27 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Leave LLM cache enabled for in-process runs (default: disabled).",
     )
+    parser.add_argument(
+        "--real-llm",
+        action="store_true",
+        help="Use the real LLM provider (no mock) for in-process runs; reads .env.",
+    )
+    parser.add_argument(
+        "--request-delay-ms",
+        type=int,
+        default=None,
+        help="Pause between estimate calls to avoid provider rate limits (default: 1500 with --real-llm, else 0).",
+    )
     return parser.parse_args(argv)
 
 
 def config_from_args(args: argparse.Namespace) -> RunConfig:
     scenarios = _parse_csv_tokens(args.scenarios)
     attachment_sizes = _parse_int_list(args.attachment_sizes)
+    real_llm = bool(args.real_llm or args.http)
+    request_delay_ms = args.request_delay_ms
+    if request_delay_ms is None:
+        request_delay_ms = 1500 if real_llm else 0
     return RunConfig(
         scenarios=tuple(scenarios),
         attachment_sizes_kb=tuple(attachment_sizes),
@@ -236,6 +253,8 @@ def config_from_args(args: argparse.Namespace) -> RunConfig:
         output=args.output,
         http_base_url=args.http,
         cache_on=args.cache_on,
+        real_llm=real_llm,
+        request_delay_ms=request_delay_ms,
     )
 
 
@@ -247,11 +266,12 @@ def _parse_int_list(value: str) -> list[int]:
     return [int(token.strip()) for token in value.split(",") if token.strip()]
 
 
-def _configure_inprocess_env(*, cache_on: bool) -> None:
-    os.environ.setdefault("LLM_PROVIDER", "openai")
-    os.environ.setdefault("OPENAI_API_KEY", "sk-test")
-    os.environ.setdefault("LLM_MODEL", "gpt-4o-mini")
-    os.environ.setdefault("APP_ENV", "development")
+def _configure_inprocess_env(*, cache_on: bool, real_llm: bool) -> None:
+    if not real_llm:
+        os.environ.setdefault("LLM_PROVIDER", "openai")
+        os.environ.setdefault("OPENAI_API_KEY", "sk-test")
+        os.environ.setdefault("LLM_MODEL", "gpt-4o-mini")
+        os.environ.setdefault("APP_ENV", "development")
     os.environ["LLM_CACHE_ENABLED"] = "true" if cache_on else "false"
 
 
@@ -346,6 +366,7 @@ def _build_row(
 async def run_stress(config: RunConfig, transport: StressTransport) -> list[dict[str, Any]]:
     """Execute all configured stress runs and return CSV rows."""
     rows: list[dict[str, Any]] = []
+    delay_seconds = config.request_delay_ms / 1000.0
 
     for scenario_name in config.scenarios:
         scenario = get_scenario(scenario_name, config.max_turns)
@@ -366,6 +387,8 @@ async def run_stress(config: RunConfig, transport: StressTransport) -> list[dict
                         turn.transcript,
                         attachments,
                     )
+                    if delay_seconds > 0:
+                        await asyncio.sleep(delay_seconds)
                     snapshot = await transport.get_snapshot(session_id)
                     observation = snapshot.get("last_turn_observed") or {}
                     cumulative_cost_usd += float(observation.get("cost_usd", 0.0))
@@ -418,6 +441,26 @@ def write_csv(output_path: Path, rows: Sequence[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
+async def _ensure_http_server_reachable(client: httpx.AsyncClient, base_url: str) -> None:
+    """Fail fast with a clear message when --http is used without a running API."""
+    try:
+        response = await client.get("/health")
+        response.raise_for_status()
+    except httpx.ConnectError as exc:
+        raise SystemExit(
+            f"Cannot connect to {base_url.rstrip('/')}.\n"
+            "Start the estimator API in another terminal, then re-run:\n"
+            "  cd estimator\n"
+            "  LLM_CACHE_ENABLED=false uv run uvicorn app.main:app --reload\n"
+            "  uv run python -m evals.stress.run --http http://localhost:8000"
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        raise SystemExit(
+            f"Health check failed at {base_url.rstrip('/')}/health: "
+            f"HTTP {exc.response.status_code}"
+        ) from exc
+
+
 async def _async_main(config: RunConfig) -> int:
     build_pdfs()
     if config.http_base_url:
@@ -425,9 +468,10 @@ async def _async_main(config: RunConfig) -> int:
             base_url=config.http_base_url.rstrip("/"),
             timeout=120.0,
         ) as client:
+            await _ensure_http_server_reachable(client, config.http_base_url)
             rows = await run_stress(config, HttpTransport(client))
     else:
-        _configure_inprocess_env(cache_on=config.cache_on)
+        _configure_inprocess_env(cache_on=config.cache_on, real_llm=config.real_llm)
         from app.config import get_settings
         from app.main import app
         from app.services.llm_cache import clear_cache
@@ -436,12 +480,15 @@ async def _async_main(config: RunConfig) -> int:
         clear_cache()
         get_settings.cache_clear()
 
-        with patch(
-            "app.services.session_estimation.generate_estimation_from_messages",
-            _fake_llm_result,
-        ):
-            transport = InProcessTransport(TestClient(app))
+        transport = InProcessTransport(TestClient(app))
+        if config.real_llm:
             rows = await run_stress(config, transport)
+        else:
+            with patch(
+                "app.services.session_estimation.generate_estimation_from_messages",
+                _fake_llm_result,
+            ):
+                rows = await run_stress(config, transport)
 
     write_csv(config.output, rows)
     print(f"wrote {len(rows)} rows to {config.output}")
