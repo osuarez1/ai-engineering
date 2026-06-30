@@ -1,0 +1,1 @@
+"""CAG stress-test harness."""
