@@ -51,6 +51,15 @@ def test_resolve_tier_medium_from_message_window(tier_settings: SimpleNamespace)
     )
 
 
+def test_resolve_tier_combines_rules_when_both_dimensions_are_medium(
+    tier_settings: SimpleNamespace,
+) -> None:
+    tier = resolve_tier(10_000, 6)
+    assert tier.label == "medium"
+    assert tier.max_tokens_bonus == 1024
+    assert tier.rule == "enriched_transcript_chars>=8000;messages_in_window>=6"
+
+
 def test_resolve_tier_high_from_full_message_window(tier_settings: SimpleNamespace) -> None:
     tier = resolve_tier(100, 12)
     assert tier == ResolvedTier(
