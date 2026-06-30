@@ -4,10 +4,10 @@
 
 - **Snapshot endpoint:** Each stress turn reads `GET /sessions/{id}` after estimate so metrics use genuine `last_turn_observed`, anchors, summary, and metadata rather than inferring state from the response body alone.
 - **Metrics module location:** `evals/stress/metrics.py` lives beside the runner because it depends on the snapshot/`turn_observed` contract; there is no shared `evals/metrics.py` base package in this repo.
-- **Cache off during stress:** The runner disables `LLM_CACHE_ENABLED` for in-process runs (and expects it off on the server for `--http`) so repeat latency/cost curves measure provider variance, not cache replay.
+- **Cache on during stress:** `LLM_CACHE_ENABLED=true` so exact and semantic cache hit rates are measured alongside latency and cost.
 - **Spec vs codebase gap:** Step 0 added anchors, rolling summary, dynamic tiers, cost wrapper, and cache instrumentation without tuning existing CAG constants (`MAX_CONVERSATION_TURNS`, prompt templates, etc.).
 
-**Run mode:** http (claude-haiku-4-5, cache off) · **Rows:** 900
+**Run mode:** in-process (real LLM, `LLM_CACHE_ENABLED=true`, 1500 ms pause between requests) · **Rows:** 900
 
 ## Summary table
 
