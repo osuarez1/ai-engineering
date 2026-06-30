@@ -1,7 +1,6 @@
 from unittest.mock import MagicMock
 
 import httpx
-import pytest
 
 from app.sessions import ProjectMetadata
 from app.ui import streamlit_helpers
@@ -116,10 +115,13 @@ def test_ensure_session_id_creates_once() -> None:
     )
     assert session_id == "session-1"
     assert state["session_id"] == "session-1"
-    assert streamlit_helpers.ensure_session_id(
-        state,
-        create_session_fn=lambda _api_base: "session-2",
-    ) == "session-1"
+    assert (
+        streamlit_helpers.ensure_session_id(
+            state,
+            create_session_fn=lambda _api_base: "session-2",
+        )
+        == "session-1"
+    )
 
 
 def test_reset_conversation_state_clears_local_memory() -> None:
