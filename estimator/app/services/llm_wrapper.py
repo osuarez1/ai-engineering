@@ -17,6 +17,11 @@ def compute_cost_usd(model: str, usage: dict) -> float:
     """Return estimated USD cost for a single LLM call."""
     rates = MODEL_COSTS.get(model)
     if rates is None:
+        for known_model, known_rates in MODEL_COSTS.items():
+            if model.startswith(known_model):
+                rates = known_rates
+                break
+    if rates is None:
         return 0.0
 
     input_tokens = usage.get("input_tokens", 0)

@@ -36,6 +36,15 @@ def test_compute_cost_usd_unknown_model_returns_zero() -> None:
     assert compute_cost_usd("unknown-model", {"input_tokens": 1000, "output_tokens": 1000}) == 0.0
 
 
+def test_compute_cost_usd_prefix_match_for_versioned_model_ids() -> None:
+    """Provider APIs may return versioned ids (e.g. claude-haiku-4-5-20251001)."""
+    cost = compute_cost_usd(
+        "claude-haiku-4-5-20251001",
+        {"input_tokens": 1_000_000, "output_tokens": 0},
+    )
+    assert cost == pytest.approx(1.0)
+
+
 def test_compute_cost_usd_missing_usage_keys_treated_as_zero() -> None:
     assert compute_cost_usd("gpt-4o-mini", {}) == 0.0
 
