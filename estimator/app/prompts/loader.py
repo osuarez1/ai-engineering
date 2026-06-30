@@ -35,12 +35,17 @@ def _get_environment(version: str) -> Environment:
 def _build_template_context(
     request: EstimationRequest,
     project_metadata: ProjectMetadata | None = None,
+    *,
+    anchors: list[str] | None = None,
+    summary: str | None = None,
 ) -> dict:
     context = request.model_dump(mode="json")
     if project_metadata is None:
         context["project_metadata"] = None
     else:
         context["project_metadata"] = project_metadata.model_dump(mode="json")
+    context["anchors"] = anchors or []
+    context["summary"] = summary or ""
     return context
 
 
@@ -64,13 +69,21 @@ def render_session_system_prompt(
     project_metadata: ProjectMetadata,
     *,
     version: str = "v2",
+    anchors: list[str] | None = None,
+    summary: str | None = None,
 ) -> str:
     """Render the system prompt for a conversational session turn.
 
-    Injects the current ``project_metadata`` block when facts are known.
+    Injects the current ``project_metadata``, ``anchors``, and ``summary`` blocks
+    when session memory is available.
     """
     env = _get_environment(version)
-    context = _build_template_context(request, project_metadata)
+    context = _build_template_context(
+        request,
+        project_metadata,
+        anchors=anchors,
+        summary=summary,
+    )
     return env.get_template("system.j2").render(**context)
 
 

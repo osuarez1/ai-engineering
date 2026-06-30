@@ -58,6 +58,25 @@ def test_render_session_system_prompt_includes_project_metadata() -> None:
 def test_render_session_system_prompt_omits_empty_metadata_block() -> None:
     system = render_session_system_prompt(REQUEST, ProjectMetadata(), version="v2")
     assert "<project_metadata>" not in system
+    assert "<session_anchors>" not in system
+    assert "<session_summary>" not in system
+
+
+def test_render_session_system_prompt_includes_anchors_and_summary() -> None:
+    system = render_session_system_prompt(
+        REQUEST,
+        ProjectMetadata(project_name="Nimbus"),
+        version="v2",
+        anchors=["budget 30000 EUR", "project is called Nimbus"],
+        summary="User: Need auth.\nAssistant: Added auth scope.",
+    )
+    assert "<session_anchors>" in system
+    assert "- budget 30000 EUR" in system
+    assert "- project is called Nimbus" in system
+    assert "pinned decisions" in system
+    assert "<session_summary>" in system
+    assert "User: Need auth." in system
+    assert "compressed context" in system
 
 
 def test_render_session_user_prompt_v2() -> None:
