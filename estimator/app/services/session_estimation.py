@@ -69,6 +69,8 @@ def build_session_messages(
         request,
         session.project_metadata,
         version=version,
+        anchors=session.anchors,
+        summary=session.summary,
     )
     messages = session.history.to_messages_list(system_prompt)
     user_input = render_session_user_prompt(request, version=version)

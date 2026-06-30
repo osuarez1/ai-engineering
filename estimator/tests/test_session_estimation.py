@@ -25,6 +25,8 @@ def test_build_session_messages_includes_prior_history() -> None:
     session = Session()
     session.history.add_turn("first turn text here", "first reply")
     session.project_metadata = ProjectMetadata(project_name="BookFlow")
+    session.anchors = ["project is called BookFlow"]
+    session.summary = "User: first turn.\nAssistant: first reply."
 
     messages = build_session_messages(
         session,
@@ -34,6 +36,10 @@ def test_build_session_messages_includes_prior_history() -> None:
 
     assert messages[0]["role"] == "system"
     assert "Project name: BookFlow" in messages[0]["content"]
+    assert "<session_anchors>" in messages[0]["content"]
+    assert "project is called BookFlow" in messages[0]["content"]
+    assert "<session_summary>" in messages[0]["content"]
+    assert "first turn" in messages[0]["content"]
     assert messages[1] == {"role": "user", "content": "first turn text here"}
     assert messages[2] == {"role": "assistant", "content": "first reply"}
     assert messages[-1]["role"] == "user"
