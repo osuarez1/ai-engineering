@@ -10,71 +10,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from evals.stress.backup import append_manifest, backup_reports, epoch_now
+
 DEFAULT_CSV = Path("evals/stress/results.csv")
 DEFAULT_REPORT = Path("evals/stress/REPORT.md")
+LOCALIZED_DIR = Path("evals/stress/localized")
+DEFAULT_REPORT_ES = LOCALIZED_DIR / "REPORT.es.md"
 MEMORY_DRIFT_SAMPLE_TURNS = (1, 3, 6, 10, 20)
-
-CSV_COLUMN_HEADERS: dict[str, dict[str, str]] = {
-    "en": {
-        "scenario": "scenario",
-        "attachment_size_kb": "attachment_size_kb",
-        "repeat": "repeat",
-        "turn_index": "turn_index",
-        "session_id": "session_id",
-        "enriched_transcript_chars": "enriched_transcript_chars",
-        "attachments_total_chars": "attachments_total_chars",
-        "messages_in_window": "messages_in_window",
-        "anchors_count": "anchors_count",
-        "summary_chars": "summary_chars",
-        "tokens_in": "tokens_in",
-        "tokens_out": "tokens_out",
-        "cost_usd": "cost_usd",
-        "latency_ms": "latency_ms",
-        "cache_hit_kind": "cache_hit_kind",
-        "last_resolved_tier": "last_resolved_tier",
-        "cumulative_cost_usd": "cumulative_cost_usd",
-        "latency_budget_passed": "latency_budget_passed",
-        "cost_budget_passed": "cost_budget_passed",
-        "memory_drift_score": "memory_drift_score",
-        "attachment_recall": "attachment_recall",
-    },
-    "es": {
-        "scenario": "escenario",
-        "attachment_size_kb": "adjunto_kib",
-        "repeat": "repeticion",
-        "turn_index": "turno",
-        "session_id": "id_sesion",
-        "enriched_transcript_chars": "caracteres_transcripcion_enriquecida",
-        "attachments_total_chars": "caracteres_adjuntos_total",
-        "messages_in_window": "mensajes_en_ventana",
-        "anchors_count": "num_anclas",
-        "summary_chars": "caracteres_resumen",
-        "tokens_in": "tokens_entrada",
-        "tokens_out": "tokens_salida",
-        "cost_usd": "coste_usd",
-        "latency_ms": "latencia_ms",
-        "cache_hit_kind": "tipo_acierto_cache",
-        "last_resolved_tier": "ultimo_nivel_resuelto",
-        "cumulative_cost_usd": "coste_acumulado_usd",
-        "latency_budget_passed": "presupuesto_latencia_ok",
-        "cost_budget_passed": "presupuesto_coste_ok",
-        "memory_drift_score": "puntuacion_memory_drift",
-        "attachment_recall": "recuperacion_adjunto",
-    },
-}
-
-CSV_VALUE_TRANSLATIONS: dict[str, dict[str, str]] = {
-    "es": {
-        "none": "ninguno",
-        "exact": "exacto",
-        "semantic": "semantico",
-        "low": "bajo",
-        "medium": "medio",
-        "high": "alto",
-        "True": "verdadero",
-        "False": "falso",
-    },
-}
 
 REPORT_LOCALES: dict[str, dict[str, str]] = {
     "en": {
@@ -225,48 +167,12 @@ class GroupSummary:
     mean_memory_drift: float
 
 
-def _base_stem(path: Path) -> str:
-    """Strip locale suffix: ``results.en.csv`` -> ``results``."""
-    stem = path.stem
-    if "." in stem:
-        return stem.rsplit(".", 1)[0]
-    return stem
-
-
-def localized_csv_path(csv_path: Path, locale: str) -> Path | None:
-    if locale == "en":
-        return None
-    base = _base_stem(csv_path)
-    return csv_path.with_name(f"{base}.{locale}{csv_path.suffix}")
-
-
-def localize_csv_row(row: dict[str, str], locale: str) -> dict[str, str]:
-    headers = CSV_COLUMN_HEADERS.get(locale, CSV_COLUMN_HEADERS["en"])
-    value_map = CSV_VALUE_TRANSLATIONS.get(locale, {})
-    localized: dict[str, str] = {}
-    for field, value in row.items():
-        header = headers.get(field, field)
-        localized[header] = value_map.get(value, value)
-    return localized
-
-
-def write_localized_csv(csv_path: Path, output_path: Path, *, locale: str) -> None:
-    rows = load_csv_rows(csv_path)
-    if not rows:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text("", encoding="utf-8")
-        return
-
-    localized_rows = [localize_csv_row(row, locale) for row in rows]
-    headers = list(localized_rows[0].keys())
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=headers)
-        writer.writeheader()
-        writer.writerows(localized_rows)
-
-
 def load_csv_rows(csv_path: Path) -> list[dict[str, str]]:
+    if not csv_path.is_file():
+        raise FileNotFoundError(
+            f"Stress results not found at {csv_path}. "
+            "Run the stress test first: uv run python -m evals.stress.run"
+        )
     with csv_path.open(encoding="utf-8", newline="") as handle:
         return list(csv.DictReader(handle))
 
@@ -319,7 +225,8 @@ def summarize_groups(rows: list[dict[str, str]]) -> list[GroupSummary]:
                 p95_latency_ms=percentile(latencies, 95),
                 total_cost_usd=sum(costs),
                 exact_cache_hit_rate=sum(kind == "exact" for kind in cache_kinds) / total_rows,
-                semantic_cache_hit_rate=sum(kind == "semantic" for kind in cache_kinds) / total_rows,
+                semantic_cache_hit_rate=sum(kind == "semantic" for kind in cache_kinds)
+                / total_rows,
                 mean_memory_drift=statistics.mean(drift_scores) if drift_scores else 0.0,
             )
         )
@@ -328,9 +235,7 @@ def summarize_groups(rows: list[dict[str, str]]) -> list[GroupSummary]:
 
 def latency_vs_tokens_turn_one(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     turn_one = [
-        row
-        for row in rows
-        if _int(row["turn_index"]) == 1 and row["scenario"] == "growing"
+        row for row in rows if _int(row["turn_index"]) == 1 and row["scenario"] == "growing"
     ]
     by_size: dict[int, list[dict[str, str]]] = defaultdict(list)
     for row in turn_one:
@@ -455,9 +360,7 @@ def generate_report_md(
         attachment_size_kb=0,
         field="cumulative_cost_usd",
     )
-    cost_ratio = (
-        growing_turn20_cumulative / growing_turn1_cost if growing_turn1_cost else 0.0
-    )
+    cost_ratio = growing_turn20_cumulative / growing_turn1_cost if growing_turn1_cost else 0.0
 
     growing_t1_tokens = _mean_turn_metric(
         rows,
@@ -641,11 +544,13 @@ def write_report(
     csv_path: Path,
     report_path: Path,
     *,
+    rows: list[dict[str, str]] | None = None,
     run_mode: str,
     locale: str = "en",
     cache_on: bool = False,
 ) -> None:
-    rows = load_csv_rows(csv_path)
+    if rows is None:
+        rows = load_csv_rows(csv_path)
     report = generate_report_md(
         rows,
         run_mode=run_mode,
@@ -657,20 +562,91 @@ def write_report(
     report_path.write_text(report, encoding="utf-8")
 
 
+def write_all_outputs(
+    csv_path: Path,
+    *,
+    run_mode: str,
+    cache_on: bool = False,
+    backup: bool = True,
+    report_en_path: Path = DEFAULT_REPORT,
+    report_es_path: Path = DEFAULT_REPORT_ES,
+    localized_dir: Path = LOCALIZED_DIR,
+) -> None:
+    """Regenerate English and Spanish reports from *csv_path*."""
+    rows = load_csv_rows(csv_path)
+    if not rows:
+        raise SystemExit(
+            f"{csv_path} contains no data rows. "
+            "Run the stress test first: uv run python -m evals.stress.run"
+        )
+
+    localized_dir.mkdir(parents=True, exist_ok=True)
+    report_es_target = report_es_path
+    if report_es_path == DEFAULT_REPORT_ES:
+        report_es_target = localized_dir / "REPORT.es.md"
+
+    if backup:
+        stamp = epoch_now()
+        backed_up = backup_reports(report_en_path, report_es_target, epoch=stamp)
+        if backed_up:
+            append_manifest(
+                {
+                    "kind": "aggregate",
+                    "epoch": stamp,
+                    "source": str(csv_path),
+                    "backups": [str(path) for path in backed_up],
+                    "run_mode": run_mode,
+                }
+            )
+
+    write_report(
+        csv_path,
+        report_en_path,
+        rows=rows,
+        run_mode=run_mode,
+        locale="en",
+        cache_on=cache_on,
+    )
+    write_report(
+        csv_path,
+        report_es_target,
+        rows=rows,
+        run_mode=run_mode,
+        locale="es",
+        cache_on=cache_on,
+    )
+
+    print(f"wrote {report_en_path}")
+    print(f"wrote {report_es_target}")
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Aggregate stress CSV and write REPORT.md.")
+    parser = argparse.ArgumentParser(
+        description="Aggregate stress CSV and write localized reports."
+    )
     parser.add_argument("--csv", type=Path, default=DEFAULT_CSV)
-    parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=DEFAULT_REPORT,
+        help="English report output path (default: evals/stress/REPORT.md).",
+    )
+    parser.add_argument(
+        "--report-es",
+        type=Path,
+        default=DEFAULT_REPORT_ES,
+        help="Spanish report output path (default: evals/stress/localized/REPORT.es.md).",
+    )
+    parser.add_argument(
+        "--localized-dir",
+        type=Path,
+        default=LOCALIZED_DIR,
+        help="Directory for the Spanish report (default: evals/stress/localized).",
+    )
     parser.add_argument(
         "--run-mode",
         default="in-process (mocked LLM, cache off)",
         help="Description of how results.csv was produced.",
-    )
-    parser.add_argument(
-        "--locale",
-        default="en",
-        choices=sorted(REPORT_LOCALES),
-        help="Report language (default: en).",
     )
     parser.add_argument(
         "--cache-on",
@@ -678,24 +654,23 @@ def main(argv: list[str] | None = None) -> int:
         help="Describe cache as enabled in the design-decisions section.",
     )
     parser.add_argument(
-        "--localized-csv",
-        type=Path,
-        default=None,
-        help="Optional path for a localized CSV export (default: <csv-stem>.<locale>.csv).",
+        "--no-backup",
+        action="store_true",
+        help="Skip archiving existing reports before overwriting them.",
     )
     args = parser.parse_args(argv)
-    write_report(
-        args.csv,
-        args.report,
-        run_mode=args.run_mode,
-        locale=args.locale,
-        cache_on=args.cache_on,
-    )
-    localized_output = args.localized_csv or localized_csv_path(args.csv, args.locale)
-    if localized_output is not None:
-        write_localized_csv(args.csv, localized_output, locale=args.locale)
-        print(f"wrote {localized_output}")
-    print(f"wrote {args.report}")
+    try:
+        write_all_outputs(
+            args.csv,
+            run_mode=args.run_mode,
+            cache_on=args.cache_on,
+            backup=not args.no_backup,
+            report_en_path=args.report,
+            report_es_path=args.report_es,
+            localized_dir=args.localized_dir,
+        )
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc)) from exc
     return 0
 
 
