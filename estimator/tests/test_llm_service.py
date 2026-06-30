@@ -378,6 +378,7 @@ def test_generate_estimation_from_messages_multiturn_openai(
     result = generate_estimation_from_messages(messages, version="v2")
 
     assert result["provider"] == "openai"
+    assert result["cost_usd"] == 0.0
     assert len(captured[0]) == 4
 
 

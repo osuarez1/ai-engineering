@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import structlog
 
 from app.config import get_settings
+from app.services.llm_wrapper import compute_cost_usd
 from app.prompts.loader import (
     render_estimation_prompt,
     render_session_system_prompt,
@@ -133,6 +134,7 @@ def generate_estimation_from_messages(
         "usage": result["usage"],
         "finish_reason": result["finish_reason"],
         "latency_ms": int((time.perf_counter() - t0) * 1000),
+        "cost_usd": compute_cost_usd(result["model"], result["usage"]),
     }
 
 
