@@ -40,5 +40,10 @@ def test_compute_cost_usd_missing_usage_keys_treated_as_zero() -> None:
     assert compute_cost_usd("gpt-4o-mini", {}) == 0.0
 
 
+def test_compute_cost_usd_small_call() -> None:
+    cost = compute_cost_usd("gpt-4o-mini", {"input_tokens": 1000, "output_tokens": 500})
+    assert cost == pytest.approx(0.00045)
+
+
 def test_model_costs_covers_default_models() -> None:
     assert set(MODEL_COSTS) == {"claude-haiku-4-5", "gpt-4o-mini", "gemini-2.0-flash"}
