@@ -77,6 +77,17 @@ def test_semantic_cache_hit(monkeypatch: pytest.MonkeyPatch) -> None:
     assert kind == "semantic"
 
 
+def test_lookup_miss_before_cache_populated(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        llm_cache,
+        "get_settings",
+        lambda: SimpleNamespace(LLM_CACHE_ENABLED=True, SEMANTIC_CACHE_THRESHOLD=0.85),
+    )
+    hit, kind = lookup("gpt-4o-mini", MESSAGES)
+    assert hit is None
+    assert kind == "none"
+
+
 def test_semantic_cache_misses_different_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         llm_cache,
