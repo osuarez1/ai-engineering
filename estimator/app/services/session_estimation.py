@@ -4,9 +4,14 @@ from app.config import get_settings
 from app.prompts.loader import render_session_system_prompt, render_session_user_prompt
 from app.schemas.request_form import DetailLevel, EstimationRequest, OutputFormat, ProjectType
 from app.services.anchor_extractor import update_anchors
-from app.services.llm_service import generate_estimation_from_messages
+from app.services.llm_service import (
+    DEFAULT_MAX_TOKENS,
+    GenerationOptions,
+    generate_estimation_from_messages,
+)
 from app.services.metadata_extractor import update_metadata_heuristic
 from app.services.summarizer import update_summary
+from app.services.tiers import adjust_max_tokens, resolve_tier
 from app.sessions import Session
 
 
@@ -79,7 +84,12 @@ def run_session_estimation(
 ) -> dict:
     """Generate an estimate using session history, then update memory."""
     messages = build_session_messages(session, enriched_transcript, version=version)
-    result = generate_estimation_from_messages(messages, version=version)
+    messages_in_window = len(messages) - 1
+    tier = resolve_tier(len(enriched_transcript), messages_in_window)
+    session.last_resolved_tier = tier.label
+    session.last_tier_rule = tier.rule
+    opts = GenerationOptions(max_tokens=adjust_max_tokens(DEFAULT_MAX_TOKENS, tier))
+    result = generate_estimation_from_messages(messages, version=version, opts=opts)
     user_content_sent = messages[-1]["content"]
     session.project_metadata = update_metadata_heuristic(
         session.project_metadata,

@@ -91,10 +91,10 @@ def test_run_session_estimation_appends_history_and_updates_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = Session()
-    captured: list[list[dict[str, str]]] = []
+    captured: list[dict] = []
 
     def fake_generate(messages, *, version: str = "v2", opts=None) -> dict:
-        captured.append(messages)
+        captured.append({"messages": messages, "opts": opts})
         return {"text": "estimate body", "prompt_version": "v2"}
 
     monkeypatch.setattr(
@@ -111,6 +111,9 @@ def test_run_session_estimation_appends_history_and_updates_metadata(
     assert session.project_metadata.project_name == "BookFlow"
     assert "project is called BookFlow" in session.anchors
     assert "BookFlow" in session.summary
+    assert session.last_resolved_tier == "low"
+    assert session.last_tier_rule == "enriched_transcript_chars<8000;messages_in_window<6"
+    assert captured[0]["opts"].max_tokens == 4000
     assert len(captured) == 1
-    assert captured[0][0]["role"] == "system"
-    assert "BookFlow" in captured[0][-1]["content"]
+    assert captured[0]["messages"][0]["role"] == "system"
+    assert "BookFlow" in captured[0]["messages"][-1]["content"]
