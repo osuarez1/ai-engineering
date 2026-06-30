@@ -101,7 +101,14 @@ def test_run_session_estimation_appends_history_and_updates_metadata(
 
     def fake_generate(messages, *, version: str = "v2", opts=None) -> dict:
         captured.append({"messages": messages, "opts": opts})
-        return {"text": "estimate body", "prompt_version": "v2"}
+        return {
+            "text": "estimate body",
+            "prompt_version": "v2",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+            "latency_ms": 1,
+            "cost_usd": 0.0,
+            "cache_hit_kind": "none",
+        }
 
     monkeypatch.setattr(
         "app.services.session_estimation.generate_estimation_from_messages",
@@ -123,3 +130,7 @@ def test_run_session_estimation_appends_history_and_updates_metadata(
     assert len(captured) == 1
     assert captured[0]["messages"][0]["role"] == "system"
     assert "BookFlow" in captured[0]["messages"][-1]["content"]
+    assert session.turn_index == 1
+    assert session.last_turn_observed is not None
+    assert session.last_turn_observed["turn_index"] == 1
+    assert session.last_turn_observed["messages_in_window"] == 2

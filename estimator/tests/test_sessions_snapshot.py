@@ -77,6 +77,13 @@ def test_get_session_snapshot_after_estimate(
     assert body["last_resolved_tier"] == "low"
     assert body["project_metadata"]["project_name"] == "Nimbus"
     assert body["project_metadata"]["budget_eur"] == 30000
+    observed = body["last_turn_observed"]
+    assert observed is not None
+    assert observed["turn_index"] == 1
+    assert observed["session_id"] == session_id
+    assert observed["tokens_in"] == 100
+    assert observed["cost_usd"] == pytest.approx(0.0001)
+    assert observed["cache_hit_kind"] == "none"
 
 
 def test_get_session_snapshot_reflects_tier_after_large_transcript(
