@@ -17,3 +17,18 @@ class SessionEstimationResponse(BaseModel):
     text: str
     prompt_version: str
     project_metadata: ProjectMetadata
+
+
+class SessionSnapshotResponse(BaseModel):
+    """Response body for ``GET /sessions/{session_id}``."""
+
+    session_id: str
+    message_count: int
+    anchors_count: int
+    anchors: list[str]
+    summary_chars: int
+    summary: str
+    last_resolved_tier: str
+    last_tier_rule: str
+    project_metadata: ProjectMetadata
+    last_turn_observed: dict | None
