@@ -86,6 +86,44 @@ def test_enrich_transcript_adds_separator_and_content() -> None:
     assert "Must use PostgreSQL for persistence." in enriched
 
 
+def test_enrich_transcript_truncates_attachment_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.attachments.get_settings",
+        lambda: type("S", (), {"MAX_ATTACHMENT_CHARS": 10})(),
+    )
+    monkeypatch.setattr(
+        "app.services.attachments.extract_attachment_text",
+        lambda _filename, _content: "x" * 20,
+    )
+    enriched = enrich_transcript("Base transcript.", [("big.pdf", b"%PDF")])
+    assert enriched.startswith("Base transcript.")
+    assert "x" * 10 in enriched
+    assert "x" * 11 not in enriched
+
+
+def test_enrich_transcript_skips_attachment_when_budget_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.attachments.get_settings",
+        lambda: type("S", (), {"MAX_ATTACHMENT_CHARS": 5})(),
+    )
+    monkeypatch.setattr(
+        "app.services.attachments.extract_attachment_text",
+        lambda _filename, _content: "abcdefghij",
+    )
+    enriched = enrich_transcript(
+        "Base transcript.",
+        [("first.pdf", b"1"), ("second.pdf", b"2")],
+    )
+    assert enriched.count(ATTACHMENT_SEPARATOR.format(filename="first.pdf")) == 1
+    assert enriched.count(ATTACHMENT_SEPARATOR.format(filename="second.pdf")) == 1
+    assert "abcde" in enriched
+    assert "fghij" not in enriched
+
+
 @pytest.mark.asyncio
 async def test_collect_attachment_payloads_reads_multiple_files() -> None:
     class FakeUpload:

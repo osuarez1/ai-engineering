@@ -14,6 +14,8 @@ from docx import Document
 from fastapi import UploadFile
 from pypdf import PdfReader
 
+from app.config import get_settings
+
 ATTACHMENT_SEPARATOR = "=== attachment: {filename} ==="
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx"}
@@ -41,9 +43,17 @@ def enrich_transcript(transcript: str, files: list[tuple[str, bytes]]) -> str:
     if not files:
         return transcript
 
+    max_chars = get_settings().MAX_ATTACHMENT_CHARS
     blocks = [transcript]
+    attachment_chars = 0
     for filename, content in files:
         extracted = extract_attachment_text(filename, content)
+        remaining = max_chars - attachment_chars
+        if remaining <= 0:
+            extracted = ""
+        elif len(extracted) > remaining:
+            extracted = extracted[:remaining]
+        attachment_chars += len(extracted)
         blocks.append(ATTACHMENT_SEPARATOR.format(filename=filename))
         blocks.append(extracted)
     return "\n\n".join(blocks)
