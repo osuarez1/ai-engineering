@@ -10,6 +10,7 @@ from pypdf.generic import DictionaryObject, NameObject, StreamObject
 
 from app.config import get_settings
 from app.main import app
+from app.services.llm_cache import clear_cache
 
 PROVIDER_FAKE_ENV: dict[str, dict[str, str]] = {
     "openai": {
@@ -39,9 +40,11 @@ def _apply_provider_env(monkeypatch: pytest.MonkeyPatch, provider: str) -> None:
 @pytest.fixture(autouse=True)
 def test_llm_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Default API tests to OpenAI with a fake key so Settings validates."""
+    clear_cache()
     _apply_provider_env(monkeypatch, "openai")
     yield
     get_settings.cache_clear()
+    clear_cache()
 
 
 @pytest.fixture
@@ -96,9 +99,7 @@ def make_pdf_with_text(text: str) -> bytes:
             NameObject("/BaseFont"): NameObject("/Helvetica"),
         }
     )
-    resources = DictionaryObject(
-        {NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})}
-    )
+    resources = DictionaryObject({NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})})
     page[NameObject("/Resources")] = resources
     page[NameObject("/Contents")] = content
     buffer = BytesIO()
