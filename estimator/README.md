@@ -1,80 +1,85 @@
-# Estimator CAG - Servicio de Estimacion de Software con IA
+# Estimator CAG — AI-Powered Software Estimation Service
 
-Servicio de estimacion de proyectos de software impulsado por IA, utilizando una arquitectura **Cache Augmented Generation (CAG)**.
+AI-powered software project estimation service using a **Cache Augmented Generation (CAG)** architecture.
 
-## Que es CAG y por que lo usamos
+## What is CAG and why we use it
 
-CAG (Cache Augmented Generation) es un patron de arquitectura donde el contexto relevante se inyecta directamente en el prompt del LLM como texto estatico. En esta fase del proyecto, las estimaciones de referencia se incluyen como ejemplos few-shot dentro del prompt del sistema, sin necesidad de una base de datos vectorial ni busqueda semantica.
+CAG (Cache Augmented Generation) is an architecture pattern where relevant context is injected directly into the LLM prompt as static text. In this project phase, reference estimations are included as few-shot examples inside the system prompt — no vector database or semantic search required.
 
-La implementacion actual usa plantillas **Jinja2** bajo `app/prompts/estimation/`: cada version (`v1`, `v2`) tiene `system.j2`, `user.j2` y `examples.j2`, renderizados por `app/prompts/loader.py`. Existen dos conjuntos de prompts para comparaciones A/B en demos en vivo.
+The current implementation uses **Jinja2** templates under `app/prompts/estimation/`: each version (`v1`, `v2`) has `system.j2`, `user.j2`, and `examples.j2`, rendered by `app/prompts/loader.py`. Two prompt sets exist for live A/B comparisons in demos.
 
-Este enfoque es ideal para empezar porque:
-- Es simple de implementar y depurar
-- No requiere infraestructura adicional (ni embeddings, ni vector stores)
-- Funciona bien cuando el volumen de contexto es manejable (pocos ejemplos)
+This approach is ideal to start because:
+- It is simple to implement and debug
+- It requires no extra infrastructure (no embeddings, no vector stores)
+- It works well when context volume is manageable (a few examples)
 
-En modulos posteriores del master, este servicio evolucionara a una arquitectura **RAG** (Retrieval Augmented Generation) con base de datos vectorial para manejar un volumen mayor de ejemplos.
+In later master modules, this service will evolve to a **RAG** (Retrieval Augmented Generation) architecture with a vector database to handle a larger example corpus.
 
-## Requisitos previos
+## Prerequisites
 
-- **Docker** y **Docker Compose** instalados (para la API)
-- Una **API key** de OpenAI, Anthropic o Google Gemini
-- **uv** y Python 3.11+ (para ejecucion local o Streamlit)
-- Python **NO** es necesario localmente si solo usas Docker para la API
+- **Docker** and **Docker Compose** installed (for the API)
+- An **API key** for OpenAI, Anthropic, or Google Gemini
+- **uv** and Python 3.11+ (for local runs or Streamlit)
+- Python is **not** required locally if you only use Docker for the API
 
-## Configuracion
+## Configuration
 
-Copia el archivo de entorno y configura las variables:
+Copy the environment file and set your variables:
 
 ```bash
 cp .env.example .env
-# Editar .env y poner tu API key real
+# Edit .env and set your real API key
 ```
 
-| Variable | Descripcion |
+| Variable | Description |
 |----------|-------------|
-| `LLM_PROVIDER` | Proveedor activo: `openai`, `anthropic` o `gemini` |
-| `LLM_MODEL` | Modelo del proveedor (p. ej. `gpt-4o-mini`, `claude-haiku-4-5`, `gemini-2.0-flash`) |
-| `OPENAI_API_KEY` | Clave OpenAI (requerida si `LLM_PROVIDER=openai`) |
-| `ANTHROPIC_API_KEY` | Clave Anthropic (requerida si `LLM_PROVIDER=anthropic`) |
-| `GEMINI_API_KEY` | Clave Google Gemini (requerida si `LLM_PROVIDER=gemini`) |
-| `APP_ENV` | Entorno: `development`, `staging` o `production` |
-| `LOG_LEVEL` | Nivel de log: `DEBUG`, `INFO`, `WARNING` o `ERROR` |
-| `MAX_CONVERSATION_TURNS` | Pares user/assistant conservados en memoria por sesion (default: `6`) |
+| `LLM_PROVIDER` | Active provider: `openai`, `anthropic`, or `gemini` |
+| `LLM_MODEL` | Provider model (e.g. `gpt-4o-mini`, `claude-haiku-4-5`, `gemini-2.0-flash`) |
+| `OPENAI_API_KEY` | OpenAI key (required when `LLM_PROVIDER=openai`) |
+| `ANTHROPIC_API_KEY` | Anthropic key (required when `LLM_PROVIDER=anthropic`) |
+| `GEMINI_API_KEY` | Google Gemini key (required when `LLM_PROVIDER=gemini`) |
+| `APP_ENV` | Environment: `development`, `staging`, or `production` |
+| `LOG_LEVEL` | Log level: `DEBUG`, `INFO`, `WARNING`, or `ERROR` |
+| `MAX_CONVERSATION_TURNS` | User/assistant pairs kept in memory per session (default: `6`) |
+| `MAX_ATTACHMENT_CHARS` | Cap on extracted attachment text (default: `60000`) |
+| `LLM_CACHE_ENABLED` | Enable exact/semantic LLM response cache (default: `true`) |
+| `SEMANTIC_CACHE_THRESHOLD` | Similarity threshold for semantic cache (default: `0.85`) |
+| `TIER_MEDIUM_CHARS` | Enriched transcript size for `medium` tier (default: `8000`) |
+| `TIER_HIGH_CHARS` | Enriched transcript size for `high` tier (default: `20000`) |
 
-`.env.example` usa `openai` por defecto; si no hay archivo `.env`, `app/config.py` cae en `anthropic` / `claude-haiku-4-5`.
+`.env.example` defaults to `openai`; without a `.env` file, `app/config.py` falls back to `anthropic` / `claude-haiku-4-5`.
 
-**Importante:** `get_settings()` esta cacheado con `@lru_cache`. Tras editar `.env`, **reinicia el proceso** (uvicorn o Streamlit). El flag `--reload` de uvicorn no recarga la configuracion cacheada.
+**Important:** `get_settings()` is cached with `@lru_cache`. After editing `.env`, **restart the process** (uvicorn or Streamlit). Uvicorn's `--reload` flag does not reload the cached settings singleton.
 
-## Inicio rapido con Docker (recomendado)
+## Quick start with Docker (recommended)
 
-1. Clonar el repositorio y entrar al directorio:
+1. Clone the repository and enter the directory:
    ```bash
    cd estimator
    ```
 
-2. Configurar `.env` (ver seccion anterior).
+2. Configure `.env` (see section above).
 
-3. Construir y levantar el servicio:
+3. Build and start the service:
    ```bash
    docker compose up --build
    ```
 
-4. La API estara disponible en `http://localhost:8000`
+4. The API will be available at `http://localhost:8000`
 
-> Docker levanta **solo la API** (puerto 8000). La interfaz Streamlit no esta incluida en `docker-compose.yml` y debe ejecutarse localmente (ver mas abajo).
+> Docker runs **only the API** (port 8000). The Streamlit UI is not included in `docker-compose.yml` and must be run locally (see below).
 
-## Alternativa: ejecucion local sin Docker
+## Alternative: local run without Docker
 
 ```bash
 uv sync
-# Configurar .env con tus API keys
+# Configure .env with your API keys
 uv run uvicorn app.main:app --reload
 ```
 
-## Interfaz web (Streamlit — Session 5)
+## Web UI (Streamlit — Session 5)
 
-Cliente conversacional multi-turno que habla con la API de sesiones. **Requiere FastAPI en paralelo.**
+Multi-turn conversational client that talks to the session API. **Requires FastAPI running in parallel.**
 
 ```bash
 # Terminal 1 — API
@@ -82,28 +87,29 @@ uv run uvicorn app.main:app --reload
 
 # Terminal 2 — Streamlit
 uv sync
-cp .env.example .env   # configurar API key segun LLM_PROVIDER
+cp .env.example .env   # configure API key for your LLM_PROVIDER
 uv run streamlit run streamlit_app.py
 ```
 
-Abre `http://localhost:8501`. Al cargar la pagina se crea una sesion (`POST /sessions`) y se guarda el `session_id`. El area principal acepta **transcript** y adjuntos PDF/DOCX; **Estimate** envia `POST /sessions/{session_id}/estimate`. La barra lateral muestra el `project_metadata` actualizado tras cada turno y un boton **New conversation** que crea una sesion nueva y reinicia el estado local.
+Open `http://localhost:8501`. On page load a session is created (`POST /sessions`) and `session_id` is stored. The main area accepts a **transcript** and PDF/DOCX attachments; **Estimate** sends `POST /sessions/{session_id}/estimate`. The sidebar shows updated `project_metadata` after each turn and a **New conversation** button that creates a fresh session and resets local state.
 
-Detalle del cliente HTTP (sin llamadas directas al LLM): [docs/ARCHITECTURE.md#clients](docs/ARCHITECTURE.md#clients).
+HTTP client details (no direct LLM calls): [docs/ARCHITECTURE.md#clients](docs/ARCHITECTURE.md#clients).
 
-## Sesiones conversacionales (Session 05)
+## Conversational sessions (Session 5)
 
-El servicio soporta estimacion multi-turno con memoria en proceso y documentos adjuntos.
+The service supports multi-turn estimation with in-process memory and document attachments.
 
 ### Endpoints
 
-| Metodo | Ruta | Descripcion |
-|--------|------|-------------|
-| `POST` | `/sessions` | Crea una sesion vacia; devuelve `{"session_id": "..."}` |
-| `POST` | `/sessions/{session_id}/estimate` | Estima con `multipart/form-data` (`transcript` + `attachments` opcionales) |
+| Method | Route | Description |
+|--------|-------|-------------|
+| `POST` | `/sessions` | Create an empty session; returns `{"session_id": "..."}` |
+| `GET` | `/sessions/{session_id}` | Memory snapshot: anchors, summary, tier, `last_turn_observed` |
+| `POST` | `/sessions/{session_id}/estimate` | Estimate via `multipart/form-data` (`transcript` + optional `attachments`) |
 
-Las sesiones viven en un diccionario en memoria del proceso: se pierden al reiniciar el servicio y no se comparten entre workers.
+Sessions live in a process-local dictionary: they are lost on service restart and are not shared across workers.
 
-Ejemplo con transcript y adjunto:
+Example with transcript and attachment:
 
 ```bash
 SESSION_ID=$(curl -s -X POST http://localhost:8000/sessions | jq -r .session_id)
@@ -113,7 +119,7 @@ curl -X POST "http://localhost:8000/sessions/${SESSION_ID}/estimate?prompt_versi
   -F "attachments=@spec.docx"
 ```
 
-**Respuesta** (`SessionEstimationResponse`):
+**Response** (`SessionEstimationResponse`):
 
 ```json
 {
@@ -128,35 +134,55 @@ curl -X POST "http://localhost:8000/sessions/${SESSION_ID}/estimate?prompt_versi
 }
 ```
 
-### Adjuntos: Path B (extraccion local)
+### Attachments: Path B (local extraction)
 
-Implementamos **Path B** — extraccion de texto en el servicio AI con `pypdf` (PDF) y `python-docx` (Word), concatenada al transcript con el separador `=== attachment: filename ===`.
+We implement **Path B** — text extraction in the AI service with `pypdf` (PDF) and `python-docx` (Word), concatenated to the transcript with the separator `=== attachment: filename ===`.
 
-**Por que Path B y no multimodal directo (Path A):**
+**Why Path B and not direct multimodal (Path A):**
 
-- **Independencia de proveedor** — el wrapper LLM sigue funcionando con OpenAI, Anthropic o Gemini sin Files API.
-- **Control y testabilidad** — el texto extraido es inspectable y mockeable en tests.
-- **Preparacion para RAG** — la misma logica de extraccion es el primer paso del pipeline de chunking del modulo 3.
+- **Provider independence** — the LLM wrapper works with OpenAI, Anthropic, or Gemini without a Files API.
+- **Control and testability** — extracted text is inspectable and mockable in tests.
+- **RAG preparation** — the same extraction logic is the first step of the module 3 chunking pipeline.
 
-Path A (subir el PDF al proveedor multimodal) es valido cuando la velocidad de desarrollo prima y se acepta acoplamiento al proveedor; para este ejercicio elegimos Path B.
+Path A (uploading the PDF to a multimodal provider) is valid when development speed matters and provider coupling is acceptable; for this exercise we chose Path B.
 
-### Extraccion de `project_metadata`: heuristica
+### `project_metadata` extraction: heuristics
 
-Tras cada turno, el servicio actualiza `project_metadata` con reglas heuristicas (`app/services/metadata_extractor.py`): regex para nombre de proyecto y tamano de equipo, vocabulario de tecnologias conocidas, y patrones simples para alcance acordado.
+After each turn, the service updates `project_metadata` with heuristic rules (`app/services/metadata_extractor.py`): regex for project name and team size, a known-technology vocabulary, and simple patterns for agreed scope.
 
-**Por que heuristica y no un extractor LLM:**
+**Why heuristics and not an LLM extractor:**
 
-- **Coste y latencia cero** — no hay una segunda llamada al modelo por turno.
-- **Comportamiento predecible** — facil de depurar en tests y en el panel de metadata del cliente.
-- **Dominio acotado** — los hechos relevantes (nombre, stack, equipo, alcance) encajan en patrones razonables en esta fase.
+- **Zero cost and latency** — no second model call per turn.
+- **Predictable behavior** — easy to debug in tests and in the client metadata panel.
+- **Bounded domain** — relevant facts (name, stack, team, scope) fit reasonable patterns at this stage.
 
-Un extractor LLM (segunda llamada con prompt estructurado) es mas robusto ante variaciones de lenguaje y multilingue; es la evolucion natural si la heuristica empieza a fallar en produccion.
+An LLM extractor (second call with a structured prompt) is more robust to language variation and multilingual input; it is the natural evolution if heuristics start failing in production.
 
-El bloque `<project_metadata>` se inyecta en el system prompt via `_project_metadata.j2` (v1 y v2) y se regenera en cada llamada junto con el sliding window de historial.
+The `<project_metadata>` block is injected into the system prompt via `_project_metadata.j2` (v1 and v2) and is regenerated on every call together with the sliding history window.
 
-Flujo detallado del pipeline multi-turno (`build_session_messages` → `cap_outgoing_messages` → `generate_estimation_from_messages` → proveedor): ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Detailed multi-turn pipeline (`build_session_messages` → `cap_outgoing_messages` → `generate_estimation_from_messages` → provider): see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Probar el servicio
+## Stress evaluation (Exercise 6.1)
+
+Harness under `evals/stress/` to measure latency, cost, cache, and memory drift across multi-turn scenarios with attachments of varying size.
+
+```bash
+# Mock in-process (fast, no API key)
+uv run python -m evals.stress.run
+
+# Real LLM in-process (reads .env)
+uv run python -m evals.stress.run --real-llm --cache-on
+
+# Against a running API
+uv run python -m evals.stress.run --http http://localhost:8000
+
+# Regenerate REPORT.md from results.csv
+uv run python -m evals.stress.aggregate --run-mode "in-process (real LLM)" --cache-on
+```
+
+The runner writes `evals/stress/results.csv` (tracked). Each turn reads `GET /sessions/{id}` after the estimate to obtain real `last_turn_observed` — see [docs/ARCHITECTURE.md#session-snapshot-and-observation](docs/ARCHITECTURE.md#session-snapshot-and-observation). Spanish reports, backups, and local logs are gitignored.
+
+## Try the service
 
 Health check:
 
@@ -164,7 +190,7 @@ Health check:
 curl http://localhost:8000/health
 ```
 
-Estimacion (contrato Session 4):
+Estimation (Session 4 contract):
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/estimate?prompt_version=v1" \
@@ -177,18 +203,18 @@ curl -X POST "http://localhost:8000/api/v1/estimate?prompt_version=v1" \
   }'
 ```
 
-**Campos del request** (`EstimationRequest`):
+**Request fields** (`EstimationRequest`):
 
-| Campo | Valores permitidos |
-|-------|-------------------|
-| `description` | Texto del proyecto (20–2000 caracteres) |
+| Field | Allowed values |
+|-------|----------------|
+| `description` | Project text (20–2000 characters) |
 | `project_type` | `mobile_app`, `web_saas`, `internal_tool`, `data_pipeline` |
 | `detail_level` | `summary`, `medium`, `detailed` |
 | `output_format` | `phases_table`, `line_items`, `narrative` |
 
-**Query param:** `prompt_version` — `v1` (default) o `v2`. Selecciona el conjunto de plantillas Jinja bajo `app/prompts/estimation/`.
+**Query param:** `prompt_version` — `v1` (default) or `v2`. Selects the Jinja template set under `app/prompts/estimation/`.
 
-**Respuesta** (`EstimationResponse`):
+**Response** (`EstimationResponse`):
 
 ```json
 {
@@ -197,11 +223,11 @@ curl -X POST "http://localhost:8000/api/v1/estimate?prompt_version=v1" \
 }
 ```
 
-## Flujo de la peticion
+## Request flow
 
 ```mermaid
 flowchart LR
-  Client[Cliente_curl_o_Streamlit]
+  Client[curl_or_Streamlit_client]
   API[POST_/api/v1/estimate]
   Loader[render_estimation_prompt]
   Templates["prompts/estimation/v1|v2"]
@@ -213,52 +239,59 @@ flowchart LR
   LLM --> API
 ```
 
-## Estructura del proyecto
+## Project structure
 
 ```
 estimator/
 ├── app/
 │   ├── main.py                    # FastAPI, CORS, GET /health
 │   ├── config.py                  # Pydantic Settings
+│   ├── logging.py                 # structlog (JSON in production)
 │   ├── routers/estimations.py     # POST /api/v1/estimate
-│   ├── routers/sessions.py        # POST /sessions, POST /sessions/{id}/estimate
+│   ├── routers/sessions.py        # POST/GET /sessions, POST /sessions/{id}/estimate
 │   ├── schemas/request_form.py    # EstimationRequest / EstimationResponse
 │   ├── schemas/session.py         # SessionCreateResponse / SessionEstimationResponse
-│   ├── services/llm_service.py    # generate_estimation_from_messages, 3 proveedores
-│   ├── services/attachments.py    # Extraccion local PDF/DOCX (Path B)
-│   ├── services/metadata_extractor.py  # Heuristica post-turno para project_metadata
+│   ├── services/llm_service.py    # generate_estimation_from_messages, 3 providers
+│   ├── services/llm_wrapper.py    # cost_usd, MODEL_COSTS
+│   ├── services/llm_cache.py      # exact/semantic cache
+│   ├── services/anchor_extractor.py  # facts promoted to anchors
+│   ├── services/summarizer.py     # rolling summary (cap 2000 chars)
+│   ├── services/tiers.py          # dynamic tier by transcript size
+│   ├── services/attachments.py    # Local PDF/DOCX extraction (Path B)
+│   ├── services/metadata_extractor.py  # Post-turn heuristic for project_metadata
 │   ├── services/session_estimation.py
 │   ├── sessions.py                # ConversationHistory, ProjectMetadata, SessionStore
 │   ├── prompts/
 │   │   ├── loader.py              # render_estimation_prompt()
 │   │   └── estimation/v1|v2/      # system.j2, user.j2, examples.j2
-│   ├── ui/streamlit_helpers.py    # Helpers HTTP puros para cliente de sesiones
-│   └── fixtures/                  # Transcripciones de ejemplo (solo fixtures)
-├── docs/ARCHITECTURE.md           # Flujos de arquitectura (form vs sesion multi-turno)
-├── streamlit_app.py               # UI conversacional (cliente HTTP de sesiones)
+│   ├── ui/streamlit_helpers.py    # Pure HTTP helpers for session client
+│   └── fixtures/                  # Sample transcriptions (fixtures only)
+├── evals/stress/                  # Runner, metrics, aggregator, REPORT.md (6.1)
+├── docs/ARCHITECTURE.md           # Architecture flows (form vs multi-turn session)
+├── streamlit_app.py               # Conversational UI (HTTP session client)
 ├── tests/                         # pytest + AppTest
-├── Dockerfile                     # Build multi-stage con uv
-├── docker-compose.yml             # Configuracion para desarrollo local
-└── pyproject.toml                 # Dependencias y configuracion
+├── Dockerfile                     # Multi-stage build with uv
+├── docker-compose.yml             # Local development configuration
+└── pyproject.toml                 # Dependencies and tooling
 ```
 
-## Tests y lint
+## Tests and lint
 
 ```bash
-uv run pytest -v          # 107 tests, cobertura 100% en app/ + streamlit_app.py
+uv run pytest -v          # 274 tests, 100% coverage on app/ + streamlit_app.py
 uv run ruff check .
 uv run ruff format .
 ```
 
-Los tests usan mocks de proveedores — no requieren API keys reales (gracias a `tests/conftest.py`).
+Tests use mocked providers — no real API keys required (via `tests/conftest.py`).
 
-## Documentacion interactiva
+## Interactive documentation
 
-Con el servicio corriendo, accede a la documentacion Swagger UI en:
+With the service running, access Swagger UI at:
 
 - **Swagger UI:** [http://localhost:8000/docs](http://localhost:8000/docs)
 - **ReDoc:** [http://localhost:8000/redoc](http://localhost:8000/redoc)
 
 ---
 
-> Este proyecto forma parte del **Master en AI Engineering** y servira como base para evolucionar hacia una arquitectura RAG con base de datos vectorial en modulos posteriores.
+> This project is part of the **Master in AI Engineering** and will serve as the base to evolve toward a RAG architecture with a vector database in later modules.
