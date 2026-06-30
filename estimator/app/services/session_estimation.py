@@ -1,5 +1,7 @@
 """Orchestration for multi-turn session estimations."""
 
+import structlog
+
 from app.config import get_settings
 from app.prompts.loader import render_session_system_prompt, render_session_user_prompt
 from app.schemas.request_form import DetailLevel, EstimationRequest, OutputFormat, ProjectType
@@ -13,6 +15,8 @@ from app.services.metadata_extractor import update_metadata_heuristic
 from app.services.summarizer import update_summary
 from app.services.tiers import adjust_max_tokens, resolve_tier
 from app.sessions import Session
+
+log = structlog.get_logger()
 
 
 def build_session_estimation_request(enriched_transcript: str) -> EstimationRequest:
@@ -83,6 +87,7 @@ def run_session_estimation(
     enriched_transcript: str,
     *,
     version: str = "v2",
+    attachments_total_chars: int = 0,
 ) -> dict:
     """Generate an estimate using session history, then update memory."""
     messages = build_session_messages(session, enriched_transcript, version=version)
@@ -107,4 +112,26 @@ def run_session_estimation(
     session.summary = update_summary(session.summary, enriched_transcript, result["text"])
     session.history.add_turn(user_content_sent, result["text"])
     session.touch()
+
+    turn_index = session.turn_index + 1
+    session.turn_index = turn_index
+    usage = result.get("usage") or {}
+    turn_observed = {
+        "turn_index": turn_index,
+        "session_id": session.session_id,
+        "enriched_transcript_chars": len(enriched_transcript),
+        "attachments_total_chars": attachments_total_chars,
+        "messages_in_window": len(session.history.messages),
+        "anchors_count": len(session.anchors),
+        "summary_chars": len(session.summary),
+        "tokens_in": usage.get("input_tokens", 0),
+        "tokens_out": usage.get("output_tokens", 0),
+        "cost_usd": result.get("cost_usd", 0.0),
+        "latency_ms": result.get("latency_ms", 0),
+        "cache_hit_kind": result.get("cache_hit_kind", "none"),
+        "last_resolved_tier": session.last_resolved_tier,
+    }
+    session.last_turn_observed = turn_observed
+    log.info("turn_observed", **turn_observed)
+
     return result

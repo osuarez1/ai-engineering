@@ -12,6 +12,7 @@ from app.schemas.session import (
 )
 from app.services.attachments import (
     UnsupportedAttachmentError,
+    attachments_total_chars,
     collect_attachment_payloads,
     enrich_transcript,
 )
@@ -87,6 +88,7 @@ async def estimate_session(
     file_payloads = await collect_attachment_payloads(attachments)
 
     try:
+        attachment_char_count = attachments_total_chars(file_payloads)
         enriched_transcript = enrich_transcript(transcript, file_payloads)
     except UnsupportedAttachmentError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -96,6 +98,7 @@ async def estimate_session(
             session,
             enriched_transcript,
             version=prompt_version,
+            attachments_total_chars=attachment_char_count,
         )
     except LLMServiceError as exc:
         log.error("session_estimation_error", session_id=session_id, error=str(exc))
