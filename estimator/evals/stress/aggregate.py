@@ -4,18 +4,20 @@ from __future__ import annotations
 
 import argparse
 import csv
+import shutil
 import statistics
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from evals.stress.backup import append_manifest, backup_reports, epoch_now
+from evals.stress.backup import append_manifest, backup_if_exists, backup_reports, epoch_now
 
 DEFAULT_CSV = Path("evals/stress/results.csv")
-DEFAULT_REPORT = Path("evals/stress/REPORT.md")
 LOCALIZED_DIR = Path("evals/stress/localized")
+DEFAULT_REPORT_EN = LOCALIZED_DIR / "REPORT.en.md"
 DEFAULT_REPORT_ES = LOCALIZED_DIR / "REPORT.es.md"
+DEFAULT_REPORT = Path("evals/stress/REPORT.md")
 MEMORY_DRIFT_SAMPLE_TURNS = (1, 3, 6, 10, 20)
 
 REPORT_LOCALES: dict[str, dict[str, str]] = {
@@ -568,11 +570,12 @@ def write_all_outputs(
     run_mode: str,
     cache_on: bool = False,
     backup: bool = True,
-    report_en_path: Path = DEFAULT_REPORT,
+    report_en_path: Path = DEFAULT_REPORT_EN,
     report_es_path: Path = DEFAULT_REPORT_ES,
+    report_publish_path: Path = DEFAULT_REPORT,
     localized_dir: Path = LOCALIZED_DIR,
 ) -> None:
-    """Regenerate English and Spanish reports from *csv_path*."""
+    """Regenerate localized reports from *csv_path* and publish Spanish to *report_publish_path*."""
     rows = load_csv_rows(csv_path)
     if not rows:
         raise SystemExit(
@@ -581,13 +584,16 @@ def write_all_outputs(
         )
 
     localized_dir.mkdir(parents=True, exist_ok=True)
-    report_es_target = report_es_path
-    if report_es_path == DEFAULT_REPORT_ES:
-        report_es_target = localized_dir / "REPORT.es.md"
+    report_en_path.parent.mkdir(parents=True, exist_ok=True)
+    report_es_path.parent.mkdir(parents=True, exist_ok=True)
 
     if backup:
         stamp = epoch_now()
-        backed_up = backup_reports(report_en_path, report_es_target, epoch=stamp)
+        backed_up = backup_reports(report_en_path, report_es_path, epoch=stamp)
+        if report_publish_path != report_es_path:
+            publish_backup = backup_if_exists(report_publish_path, "REPORT", epoch=stamp)
+            if publish_backup is not None:
+                backed_up.append(publish_backup)
         if backed_up:
             append_manifest(
                 {
@@ -609,15 +615,17 @@ def write_all_outputs(
     )
     write_report(
         csv_path,
-        report_es_target,
+        report_es_path,
         rows=rows,
         run_mode=run_mode,
         locale="es",
         cache_on=cache_on,
     )
+    shutil.copy2(report_es_path, report_publish_path)
 
     print(f"wrote {report_en_path}")
-    print(f"wrote {report_es_target}")
+    print(f"wrote {report_es_path}")
+    print(f"wrote {report_publish_path}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -626,10 +634,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--csv", type=Path, default=DEFAULT_CSV)
     parser.add_argument(
-        "--report",
+        "--report-en",
         type=Path,
-        default=DEFAULT_REPORT,
-        help="English report output path (default: evals/stress/REPORT.md).",
+        default=DEFAULT_REPORT_EN,
+        help="English report output path (default: evals/stress/localized/REPORT.en.md).",
     )
     parser.add_argument(
         "--report-es",
@@ -638,10 +646,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Spanish report output path (default: evals/stress/localized/REPORT.es.md).",
     )
     parser.add_argument(
+        "--report",
+        type=Path,
+        default=DEFAULT_REPORT,
+        help="Published report copy (default: evals/stress/REPORT.md, copied from Spanish).",
+    )
+    parser.add_argument(
         "--localized-dir",
         type=Path,
         default=LOCALIZED_DIR,
-        help="Directory for the Spanish report (default: evals/stress/localized).",
+        help="Directory for localized reports (default: evals/stress/localized).",
     )
     parser.add_argument(
         "--run-mode",
@@ -665,8 +679,9 @@ def main(argv: list[str] | None = None) -> int:
             run_mode=args.run_mode,
             cache_on=args.cache_on,
             backup=not args.no_backup,
-            report_en_path=args.report,
+            report_en_path=args.report_en,
             report_es_path=args.report_es,
+            report_publish_path=args.report,
             localized_dir=args.localized_dir,
         )
     except FileNotFoundError as exc:

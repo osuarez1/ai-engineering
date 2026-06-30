@@ -52,7 +52,7 @@ def backup_reports(
     """Archive existing reports before aggregate regenerates them."""
     stamp = epoch_now() if epoch is None else epoch
     backed_up: list[Path] = []
-    for source, prefix in ((report_en, "REPORT"), (report_es, "REPORT.es")):
+    for source, prefix in ((report_en, "REPORT.en"), (report_es, "REPORT.es")):
         destination = backup_if_exists(source, prefix, epoch=stamp)
         if destination is not None:
             backed_up.append(destination)

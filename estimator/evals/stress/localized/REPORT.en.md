@@ -7,7 +7,7 @@
 - **Cache on during stress:** `LLM_CACHE_ENABLED=true` so exact and semantic cache hit rates are measured alongside latency and cost.
 - **Spec vs codebase gap:** Step 0 added anchors, rolling summary, dynamic tiers, cost wrapper, and cache instrumentation without tuning existing CAG constants (`MAX_CONVERSATION_TURNS`, prompt templates, etc.).
 
-**Run mode:** in-process (real LLM, `LLM_CACHE_ENABLED=true`, 1500 ms pause between requests) · **Rows:** 900
+**Run mode:** in-process (real LLM, LLM_CACHE_ENABLED=true, 1500 ms pause between requests) · **Rows:** 900
 
 ## Summary table
 

@@ -66,7 +66,7 @@ def test_backup_reports_archives_existing_reports(
     backed_up = backup_reports(report_en, report_es, epoch=1_700_000_002)
 
     assert backed_up == [
-        backup_dir / "REPORT.1700000002.md",
+        backup_dir / "REPORT.en.1700000002.md",
         backup_dir / "REPORT.es.1700000002.md",
     ]
 
@@ -139,16 +139,19 @@ def test_write_all_outputs_generates_en_es_reports_and_csv(
             }
         )
 
-    report_en = tmp_path / "REPORT.md"
+    report_en = tmp_path / "localized" / "REPORT.en.md"
     report_es = tmp_path / "localized" / "REPORT.es.md"
+    report_publish = tmp_path / "REPORT.md"
     write_all_outputs(
         csv_path,
         run_mode="test",
         backup=False,
         report_en_path=report_en,
         report_es_path=report_es,
+        report_publish_path=report_publish,
         localized_dir=tmp_path / "localized",
     )
 
     assert "## Design decisions" in report_en.read_text(encoding="utf-8")
     assert "## Decisiones de diseño" in report_es.read_text(encoding="utf-8")
+    assert report_publish.read_text(encoding="utf-8") == report_es.read_text(encoding="utf-8")

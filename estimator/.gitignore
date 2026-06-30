@@ -38,7 +38,6 @@ evals/stress/fixtures/*.pdf
 
 # Stress-test run artifacts (results.csv is tracked; backups and logs are local)
 evals/stress/backup/
-evals/stress/localized/
 evals/stress/results.*.csv
 evals/stress/run.log
 evals/stress/.~lock.*
