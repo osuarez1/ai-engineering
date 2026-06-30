@@ -79,6 +79,29 @@ def test_get_session_snapshot_after_estimate(
     assert body["project_metadata"]["budget_eur"] == 30000
 
 
+def test_get_session_snapshot_reflects_tier_after_large_transcript(
+    client: TestClient,
+    session_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        session_estimation,
+        "generate_estimation_from_messages",
+        lambda *args, **kwargs: _fake_llm_result(),
+    )
+
+    transcript = "x" * 10_000 + " We need auth and roles for the CRM MVP."
+    response = client.post(
+        f"/sessions/{session_id}/estimate",
+        data={"transcript": transcript},
+    )
+    assert response.status_code == 200
+
+    snapshot = client.get(f"/sessions/{session_id}").json()
+    assert snapshot["last_resolved_tier"] == "medium"
+    assert "enriched_transcript_chars>=8000" in snapshot["last_tier_rule"]
+
+
 def test_get_session_snapshot_includes_last_turn_observed(
     client: TestClient,
     session_id: str,
