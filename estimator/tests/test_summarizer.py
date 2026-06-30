@@ -24,3 +24,10 @@ def test_update_summary_truncates_long_turn_snippets() -> None:
     summary = update_summary("", "u" * 500, "a" * 500)
     assert "u" * 400 + "..." in summary
     assert "a" * 400 + "..." in summary
+
+
+def test_update_summary_preserves_content_under_limit() -> None:
+    summary = update_summary("", "short user", "short assistant")
+    assert len(summary) < MAX_SUMMARY_CHARS
+    assert "short user" in summary
+    assert "short assistant" in summary
