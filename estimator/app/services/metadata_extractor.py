@@ -38,6 +38,7 @@ KNOWN_TECHNOLOGIES: dict[str, str] = {
     "graphql": "GraphQL",
     "next.js": "Next.js",
     "nextjs": "Next.js",
+    "flutter": "Flutter",
 }
 
 _PROJECT_NAME_PATTERNS = (
@@ -62,6 +63,8 @@ _SCOPE_PATTERN = re.compile(
     r"(?:agreed scope|scope is|mvp includes)[: ]+(.{20,200}?)(?:\.|$)",
     re.IGNORECASE,
 )
+
+_BUDGET_EUR_PATTERN = re.compile(r"budget\s+(\d[\d,.\s]*)\s*EUR", re.IGNORECASE)
 
 
 def update_metadata_heuristic(
@@ -96,6 +99,10 @@ def update_metadata_heuristic(
         if scope_match:
             updates["agreed_scope"] = scope_match.group(1).strip()
 
+    budget_match = _BUDGET_EUR_PATTERN.search(combined)
+    if budget_match:
+        updates["budget_eur"] = _parse_budget_eur(budget_match.group(1))
+
     if not updates:
         return metadata
     return metadata.model_copy(update=updates)
@@ -103,6 +110,11 @@ def update_metadata_heuristic(
 
 def _clean_capture(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip(" .,:;-")
+
+
+def _parse_budget_eur(raw: str) -> int:
+    normalized = raw.replace(",", "").replace(" ", "").split(".", maxsplit=1)[0]
+    return int(normalized)
 
 
 def _find_technologies(lowered_text: str) -> set[str]:

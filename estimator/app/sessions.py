@@ -28,6 +28,7 @@ class ProjectMetadata(BaseModel):
     assumed_team_size: int | None = None
     mentioned_technologies: list[str] = Field(default_factory=list)
     agreed_scope: str | None = None
+    budget_eur: int | None = None
 
 
 class Message(BaseModel):

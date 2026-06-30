@@ -61,3 +61,30 @@ def test_update_metadata_cleans_captured_project_name() -> None:
         "Estimate for BookFlow.",
     )
     assert metadata.project_name == "BookFlow"
+
+
+def test_update_metadata_extracts_flutter_technology() -> None:
+    metadata = update_metadata_heuristic(
+        ProjectMetadata(),
+        "We are switching to Flutter for the mobile client.",
+        "Stack includes Flutter.",
+    )
+    assert metadata.mentioned_technologies == ["Flutter"]
+
+
+def test_update_metadata_extracts_budget_eur() -> None:
+    metadata = update_metadata_heuristic(
+        ProjectMetadata(),
+        "The approved budget 30000 EUR covers MVP delivery.",
+        "Estimate aligned to budget.",
+    )
+    assert metadata.budget_eur == 30000
+
+
+def test_update_metadata_overwrites_budget_eur_on_contradiction() -> None:
+    metadata = update_metadata_heuristic(
+        ProjectMetadata(budget_eur=30000),
+        "Revised budget 80000 EUR after scope expansion.",
+        "Updated estimate.",
+    )
+    assert metadata.budget_eur == 80000

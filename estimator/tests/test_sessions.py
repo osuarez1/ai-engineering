@@ -17,6 +17,7 @@ def test_project_metadata_defaults() -> None:
     assert metadata.assumed_team_size is None
     assert metadata.mentioned_technologies == []
     assert metadata.agreed_scope is None
+    assert metadata.budget_eur is None
 
 
 def test_conversation_history_to_messages_list_prepends_system() -> None:
