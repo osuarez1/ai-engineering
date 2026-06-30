@@ -38,6 +38,15 @@ def test_extract_anchors_locked_decision() -> None:
     assert "locked decision: use PostgreSQL for all persistence" in anchors
 
 
+def test_extract_anchors_firm_decision_phrase() -> None:
+    anchors = extract_anchors_from_turn(
+        "Firm decision: ship MVP with CSV export only.",
+        "Acknowledged.",
+        ProjectMetadata(),
+    )
+    assert "locked decision: ship MVP with CSV export only" in anchors
+
+
 def test_extract_anchors_switching_phrase() -> None:
     anchors = extract_anchors_from_turn(
         "We are switching to Flutter for the mobile client.",
