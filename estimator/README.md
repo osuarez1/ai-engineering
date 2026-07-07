@@ -182,6 +182,86 @@ uv run python -m evals.stress.aggregate --run-mode "in-process (real LLM)" --cac
 
 The runner writes `evals/stress/results.csv` (tracked). Each turn reads `GET /sessions/{id}` after the estimate to obtain real `last_turn_observed` — see [docs/ARCHITECTURE.md#session-snapshot-and-observation](docs/ARCHITECTURE.md#session-snapshot-and-observation). Localized reports live under `evals/stress/localized/` (`REPORT.en.md`, `REPORT.es.md`); `REPORT.md` at the stress root is temporarily a Spanish publish copy. Backups and run logs are gitignored.
 
+## Embedding pipeline (Session 07 pre-exercise)
+
+Structural chunking and OpenAI embeddings for historical budget proposals. Vectors are returned in-memory via HTTP — no vector database yet (persistence arrives in Session 08).
+
+**Requirements:** `OPENAI_API_KEY` in `.env` (used by `text-embedding-3-small` regardless of `LLM_PROVIDER`).
+
+### `POST /embeddings/ingest`
+
+Chunks each budget component, embeds with `text-embedding-3-small`, and returns vectorized chunks plus stats.
+
+```bash
+# Ingest the first proposal from the sample dataset
+jq -n --slurpfile budgets data/budgets_sample.json '{budgets: [$budgets[0]]}' | \
+  curl -s -X POST http://localhost:8000/embeddings/ingest \
+    -H "Content-Type: application/json" \
+    -d @- | jq '{chunks: (.chunks | length), stats}'
+```
+
+**Response** (`IngestResponse`):
+
+```json
+{
+  "chunks": [
+    {
+      "chunk_id": "BUD-2024-014::AUTH-001",
+      "text": "[Project: Mobile banking API...]\n...",
+      "metadata": {
+        "budget_id": "BUD-2024-014",
+        "component_id": "AUTH-001",
+        "client_sector": "finance",
+        "main_technology": "ruby_on_rails",
+        "year": 2024,
+        "complexity": "high",
+        "estimated_hours": 120
+      },
+      "token_count": 99,
+      "embedding": [0.012, -0.034, "..."]
+    }
+  ],
+  "stats": {
+    "total_budgets": 1,
+    "total_chunks": 4,
+    "total_tokens": 353,
+    "estimated_cost_usd": 0.00000706
+  }
+}
+```
+
+Sample data: `data/budgets_sample.json` (15 normalized proposals). See also `app/embedding_pipeline/SANITY_CHECK.md` for embedding similarity sanity results.
+
+Pipeline details: [docs/ARCHITECTURE.md#embedding-pipeline](docs/ARCHITECTURE.md#embedding-pipeline).
+
+### `scripts/compare.py` — cosine similarity CLI
+
+Embed two texts and print their cosine similarity (stdlib math, no numpy).
+
+**Outside the container** (from `estimator/`, loads `.env` via pydantic-settings):
+
+```bash
+uv run python scripts/compare.py \
+  --text-a "OAuth 2.0 authentication backend for fintech" \
+  --text-b "JWT-based authorization service for banking app"
+```
+
+**Inside the container** (requires `docker compose up`; service name is `estimator`):
+
+```bash
+docker compose exec estimator python scripts/compare.py \
+  --text-a "OAuth 2.0 authentication backend for fintech" \
+  --text-b "JWT-based authorization service for banking app"
+```
+
+Example output:
+
+```text
+Text A: OAuth 2.0 authentication backend for fintech
+Text B: JWT-based authorization service for banking app
+Cosine similarity: 0.6330
+```
+
 ## Try the service
 
 Health check:
@@ -265,7 +345,18 @@ estimator/
 │   │   ├── loader.py              # render_estimation_prompt()
 │   │   └── estimation/v1|v2/      # system.j2, user.j2, examples.j2
 │   ├── ui/streamlit_helpers.py    # Pure HTTP helpers for session client
+│   ├── embedding_pipeline/        # Session 07: structural chunking + embeddings
+│   │   ├── chunker.py             # JSONStructuralChunker (one component = one chunk)
+│   │   ├── embedder.py            # OpenAIEmbedder (text-embedding-3-small)
+│   │   ├── router.py              # POST /embeddings/ingest
+│   │   ├── similarity.py          # stdlib cosine_similarity
+│   │   ├── compare_cli.py         # compare_texts / main (testable CLI core)
+│   │   └── SANITY_CHECK.md        # Three-pair similarity sanity results
 │   └── fixtures/                  # Sample transcriptions (fixtures only)
+├── data/
+│   └── budgets_sample.json        # 15 normalized proposals for embedding ingest
+├── scripts/
+│   └── compare.py                 # CLI entrypoint for embedding similarity
 ├── evals/stress/                  # Runner, metrics, aggregator (6.1)
 │   ├── localized/                 # REPORT.en.md, REPORT.es.md
 │   └── REPORT.md                  # Published copy (Spanish, temporary)
@@ -280,7 +371,7 @@ estimator/
 ## Tests and lint
 
 ```bash
-uv run pytest -v          # 274 tests, 100% coverage on app/ + streamlit_app.py
+uv run pytest -v          # 303 tests, 100% coverage on app/ + streamlit_app.py + scripts/
 uv run ruff check .
 uv run ruff format .
 ```
