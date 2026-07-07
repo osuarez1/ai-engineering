@@ -198,8 +198,8 @@ flowchart LR
 
 1. **`IngestRequest`** — `budgets: list[Budget]` validated by Pydantic (`schemas.py`). Sample data in `data/budgets_sample.json`.
 2. **`JSONStructuralChunker.chunk`** — One `BudgetComponent` → one `Chunk`. Parent proposal context (sector, year, main tech) is prepended to component text as a contextual header. Metadata carries filterable fields (`budget_id`, `component_id`, `client_sector`, etc.) separate from the embedded text.
-3. **`OpenAIEmbedder.embed_many`** — Batches up to 100 chunks per API call. `RateLimitError` retries with 1s / 2s / 4s backoff. Per-batch `embedding_batch_processed` structlog events; `estimate_cost_usd` computed from token totals.
-4. **`IngestResponse`** — `chunks: list[EmbeddedChunk]` plus `stats` (`total_budgets`, `total_chunks`, `total_tokens`, `estimated_cost_usd`).
+3. **`OpenAIEmbedder.embed_many`** — Batches up to 100 chunks per API call. `RateLimitError` retries with 1s / 2s / 4s backoff. Per-batch `embedding_batch_processed` structlog events. Returns `EmbedManyResult` with embedded chunks, `total_tokens`, and `estimated_cost_usd` (from `PRICE_PER_1M_TOKENS_USD`).
+4. **`IngestResponse`** — Router maps `EmbedManyResult` into `chunks` and `stats` (`total_budgets`, `total_chunks`, `total_tokens`, `estimated_cost_usd`).
 
 Errors from the embedding API are logged and returned as HTTP 500 with a generic message.
 
