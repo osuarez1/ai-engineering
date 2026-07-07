@@ -56,6 +56,14 @@ class EmbeddedChunk(Chunk):
     embedding: list[float] = Field(min_length=1)
 
 
+class EmbedManyResult(BaseModel):
+    """Result of batch embedding, including token and cost totals."""
+
+    chunks: list[EmbeddedChunk]
+    total_tokens: int = Field(ge=0)
+    estimated_cost_usd: float = Field(ge=0.0)
+
+
 class IngestRequest(BaseModel):
     """Request body for ``POST /embeddings/ingest``."""
 

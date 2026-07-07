@@ -9,7 +9,7 @@ import structlog
 from openai import OpenAI, RateLimitError
 
 from app.config import get_settings
-from app.embedding_pipeline.schemas import Chunk, EmbeddedChunk
+from app.embedding_pipeline.schemas import Chunk, EmbedManyResult, EmbeddedChunk
 
 if TYPE_CHECKING:
     from openai import OpenAI as OpenAIClient
@@ -46,16 +46,18 @@ class OpenAIEmbedder:
         response = self._create_embeddings([text])
         return response[0]
 
-    def embed_many(self, chunks: list[Chunk]) -> list[EmbeddedChunk]:
-        """Embed chunks in batches and return vectorized results."""
+    def embed_many(self, chunks: list[Chunk]) -> EmbedManyResult:
+        """Embed chunks in batches and return vectorized results with cost stats."""
         if not chunks:
-            return []
+            return EmbedManyResult(chunks=[], total_tokens=0, estimated_cost_usd=0.0)
 
         embedded: list[EmbeddedChunk] = []
+        total_tokens = 0
         for start in range(0, len(chunks), self._batch_size):
             batch = chunks[start : start + self._batch_size]
             vectors = self._create_embeddings([chunk.text for chunk in batch])
             batch_tokens = sum(chunk.token_count for chunk in batch)
+            total_tokens += batch_tokens
             embedded.extend(
                 EmbeddedChunk(
                     chunk_id=chunk.chunk_id,
@@ -73,7 +75,11 @@ class OpenAIEmbedder:
                 token_total=batch_tokens,
                 latency_ms=round(self._last_batch_latency_ms, 1),
             )
-        return embedded
+        return EmbedManyResult(
+            chunks=embedded,
+            total_tokens=total_tokens,
+            estimated_cost_usd=estimate_cost_usd(total_tokens),
+        )
 
     def _create_embeddings(self, texts: list[str]) -> list[list[float]]:
         """Call the embeddings API with rate-limit backoff."""
