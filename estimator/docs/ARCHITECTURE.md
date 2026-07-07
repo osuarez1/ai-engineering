@@ -9,8 +9,9 @@ Architecture notes for the FastAPI estimator service. For setup, env vars, and c
 | Form API | `POST /api/v1/estimate` | `generate_estimation_from_request` | `render_estimation_prompt` (v1/v2) |
 | Session API | `POST /sessions/{id}/estimate` | `run_session_estimation` → `generate_estimation_from_messages` | `render_session_system_prompt` + `render_session_user_prompt` (v2 default) |
 | Session snapshot | `GET /sessions/{id}` | — (read-only) | — |
+| Embedding ingest | `POST /embeddings/ingest` | `OpenAIEmbedder.embed_many` | — (structural chunk text, no Jinja) |
 
-Both paths converge on `_dispatch_llm` in `app/services/llm_service.py`, which routes a message array (system first, then user/assistant turns) to OpenAI, Anthropic, or Gemini.
+Both estimation paths converge on `_dispatch_llm` in `app/services/llm_service.py`, which routes a message array (system first, then user/assistant turns) to OpenAI, Anthropic, or Gemini. The embedding path uses the OpenAI embeddings API directly and does not share the chat LLM provider abstraction.
 
 ## Multi-turn session LLM message flow
 
@@ -175,3 +176,44 @@ flowchart LR
 Pure HTTP and validation logic lives in `app/ui/streamlit_helpers.py` (no Streamlit imports) so behaviour is unit-testable without AppTest. The sidebar displays `project_metadata` returned by the API — memory the server maintains across turns, distinct from the transcript the user types each time.
 
 The legacy Session 4 form client (`POST /api/v1/estimate`) is no longer exposed in Streamlit; the form API path remains available for curl, tests, and other HTTP clients.
+
+## Embedding pipeline
+
+Session 07 adds `app/embedding_pipeline/` — a first step toward RAG: ingest normalized budget JSON, chunk by component, embed with `text-embedding-3-small`, and return vectors in-memory (no vector DB persistence yet).
+
+```mermaid
+flowchart LR
+  Client["HTTP client or compare.py"]
+  Router["embedding_pipeline/router.py<br/>POST /embeddings/ingest"]
+  Chunker["JSONStructuralChunker"]
+  Embedder["OpenAIEmbedder"]
+  OpenAI["OpenAI embeddings API"]
+
+  Client --> Router
+  Router --> Chunker --> Embedder --> OpenAI
+  Embedder --> Router
+```
+
+### Ingest flow (`POST /embeddings/ingest`)
+
+1. **`IngestRequest`** — `budgets: list[Budget]` validated by Pydantic (`schemas.py`). Sample data in `data/budgets_sample.json`.
+2. **`JSONStructuralChunker.chunk`** — One `BudgetComponent` → one `Chunk`. Parent proposal context (sector, year, main tech) is prepended to component text as a contextual header. Metadata carries filterable fields (`budget_id`, `component_id`, `client_sector`, etc.) separate from the embedded text.
+3. **`OpenAIEmbedder.embed_many`** — Batches up to 100 chunks per API call. `RateLimitError` retries with 1s / 2s / 4s backoff. Per-batch `embedding_batch_processed` structlog events; `estimate_cost_usd` computed from token totals.
+4. **`IngestResponse`** — `chunks: list[EmbeddedChunk]` plus `stats` (`total_budgets`, `total_chunks`, `total_tokens`, `estimated_cost_usd`).
+
+Errors from the embedding API are logged and returned as HTTP 500 with a generic message.
+
+### Compare CLI (`scripts/compare.py`)
+
+Thin wrapper over `compare_cli.py`: embeds two strings via `OpenAIEmbedder.embed_one`, computes cosine similarity with stdlib math (`similarity.py`). Used for the three-pair sanity check documented in `app/embedding_pipeline/SANITY_CHECK.md`.
+
+### Module map
+
+| Module | Role |
+|--------|------|
+| `schemas.py` | `Budget`, `Chunk`, `EmbeddedChunk`, `IngestRequest`, `IngestResponse` |
+| `chunker.py` | Structural JSON chunking; `tiktoken` token counts |
+| `embedder.py` | OpenAI `text-embedding-3-small`; batching and cost constant |
+| `router.py` | FastAPI `POST /embeddings/ingest` |
+| `similarity.py` | `cosine_similarity` (stdlib only) |
+| `compare_cli.py` | Testable CLI core for pairwise comparison |
