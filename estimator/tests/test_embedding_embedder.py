@@ -10,7 +10,7 @@ from app.embedding_pipeline.embedder import (
     _call_with_rate_limit_backoff,
     estimate_cost_usd,
 )
-from app.embedding_pipeline.schemas import Chunk
+from app.embedding_pipeline.schemas import Chunk, EmbedManyResult
 
 
 def _make_chunk(index: int) -> Chunk:
@@ -38,7 +38,8 @@ def test_embed_one_returns_first_vector() -> None:
 
 def test_embed_many_empty_list() -> None:
     embedder = OpenAIEmbedder(client=MagicMock())
-    assert embedder.embed_many([]) == []
+    result = embedder.embed_many([])
+    assert result == EmbedManyResult(chunks=[], total_tokens=0, estimated_cost_usd=0.0)
 
 
 def test_embed_many_batches_when_over_batch_size() -> None:
@@ -50,10 +51,12 @@ def test_embed_many_batches_when_over_batch_size() -> None:
     ]
     embedder = OpenAIEmbedder(client=mock_client, batch_size=BATCH_SIZE)
     result = embedder.embed_many(chunks)
-    assert len(result) == BATCH_SIZE + 5
+    assert len(result.chunks) == BATCH_SIZE + 5
+    assert result.total_tokens == (BATCH_SIZE + 5) * 10
+    assert result.estimated_cost_usd == estimate_cost_usd(result.total_tokens)
     assert mock_client.embeddings.create.call_count == 2
-    assert result[0].embedding == [0.0]
-    assert result[-1].chunk_id == f"BUD::{BATCH_SIZE + 4}"
+    assert result.chunks[0].embedding == [0.0]
+    assert result.chunks[-1].chunk_id == f"BUD::{BATCH_SIZE + 4}"
 
 
 def test_rate_limit_backoff_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
