@@ -184,7 +184,7 @@ The runner writes `evals/stress/results.csv` (tracked). Each turn reads `GET /se
 
 ## Embedding pipeline (Session 07 pre-exercise)
 
-Structural chunking and OpenAI embeddings for historical budget proposals. Vectors are returned in-memory via HTTP — no vector database yet (persistence arrives in Session 08).
+Structural chunking and OpenAI embeddings for historical budget proposals. Session 07 originally returned vectors in-memory; Session 08 (below) persists them in Postgres + pgvector and adds semantic search.
 
 **Requirements:** `OPENAI_API_KEY` in `.env` (used by `text-embedding-3-small` regardless of `LLM_PROVIDER`).
 
@@ -261,6 +261,30 @@ Text A: OAuth 2.0 authentication backend for fintech
 Text B: JWT-based authorization service for banking app
 Cosine similarity: 0.6330
 ```
+
+## Vector store + search (Session 08 pre-exercise)
+
+PostgreSQL 16 + pgvector persists Session 07 chunks and serves semantic search. Schema is managed with Alembic (`documents` + `chunks`). Use `DATABASE_URL` (see `.env.example`); Compose sets it to the `postgres` service automatically.
+
+```bash
+docker compose up -d --build
+docker compose run --rm estimator alembic upgrade head
+uv run python scripts/ingest_examples.py   # 15 budgets → POST /embeddings/ingest
+uv run python query_examples.py            # five query archetypes → POST /search
+# Captured sample: output_examples.txt
+```
+
+`POST /embeddings/ingest` accepts `{source_path, document_type, content}` and returns `{document_id, chunks_created, embedding_dimension, ingestion_time_ms}` (409 on duplicate `source_path`). `POST /search` accepts `{query, k}` and returns ranked chunks with cosine `distance`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+### Design decisions
+
+**Two tables (`documents` + `chunks`), not one flattened table.** A document is one ingested budget (`source_path`, type, document-level metadata). Chunks are the retrieval unit: one row per budget component with `content`, `embedding`, and chunk metadata. Splitting keeps cascade deletes clean (`ON DELETE CASCADE`), avoids repeating document fields on every component, and matches how RAG later retrieves passages while still joining back to provenance.
+
+**JSONB for metadata, not dedicated columns.** Chunk/document filters (sector, year, technology, complexity, hours) evolve with the corpus. JSONB plus a GIN index on `chunks.metadata` avoids a migration per filter field; selective `metadata->>'…'` predicates stay available for the live session without baking them into the schema now.
+
+**Cosine distance (`<=>` / `cosine_distance`), not L2 or inner product.** OpenAI `text-embedding-3-small` vectors are L2-normalized, so cosine distance and (scaled) inner product rank equivalently; cosine remains the less surprising metric when norms drift and is the convention aligned with a future `vector_cosine_ops` index. L2 would be misleading once vectors are unit length.
+
+**No HNSW/IVFFlat index yet.** The sample corpus is tiny (~64 chunks); a sequential scan is correct and fast. Leaving ANN indexing out keeps a clean baseline for the live session (index impact, metadata filters, hybrid search, tuning). Non-vector indexes (`source_path`, `document_id`, `chunk_type`, GIN on metadata) are in place for ordinary lookups only.
 
 ## Try the service
 
