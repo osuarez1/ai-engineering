@@ -1,60 +1,72 @@
+"""Tests for ingest request/response schema validation and router stub."""
+
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
-from app.embedding_pipeline.schemas import EmbedManyResult, EmbeddedChunk
-
-
-def _embedded_chunk(chunk_id: str, token_count: int) -> EmbeddedChunk:
-    return EmbeddedChunk(
-        chunk_id=chunk_id,
-        text="chunk text",
-        metadata={"component_id": "AUTH-001"},
-        token_count=token_count,
-        embedding=[0.1, 0.2],
-    )
+from app.embedding_pipeline.schemas import (
+    DocumentAlreadyIngestedDetail,
+    IngestRequest,
+    IngestResponse,
+)
 
 
-def test_ingest_returns_embedded_chunks(client: TestClient) -> None:
+def test_ingest_request_accepts_source_path_and_budget_content() -> None:
     sample = json.loads(Path("data/budgets_sample.json").read_text())
-    payload = {"budgets": [sample[0]]}
+    request = IngestRequest(
+        source_path="data/budgets_sample.json#BUD-2024-014",
+        document_type="historical_budget",
+        content=sample[0],
+    )
+    assert request.source_path.endswith("BUD-2024-014")
+    assert request.document_type == "historical_budget"
+    assert request.content.budget_id == "BUD-2024-014"
 
-    with patch("app.embedding_pipeline.router.OpenAIEmbedder") as mock_embedder_cls:
-        mock_embedder_cls.return_value.embed_many.return_value = EmbedManyResult(
-            chunks=[
-                _embedded_chunk("BUD-2024-014::AUTH-001", 99),
-                _embedded_chunk("BUD-2024-014::API-002", 88),
-                _embedded_chunk("BUD-2024-014::PSD2-003", 77),
-                _embedded_chunk("BUD-2024-014::MOB-004", 66),
-            ],
-            total_tokens=330,
-            estimated_cost_usd=0.0000066,
+
+def test_ingest_request_rejects_empty_source_path() -> None:
+    sample = json.loads(Path("data/budgets_sample.json").read_text())
+    with pytest.raises(ValidationError):
+        IngestRequest(
+            source_path="",
+            document_type="historical_budget",
+            content=sample[0],
         )
-        response = client.post("/embeddings/ingest", json=payload)
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["stats"]["total_budgets"] == 1
-    assert body["stats"]["total_chunks"] == 4
-    assert body["stats"]["total_tokens"] == 330
-    assert body["stats"]["estimated_cost_usd"] == 0.0000066
-    assert len(body["chunks"]) == 4
 
 
-def test_ingest_returns_422_for_invalid_payload(client: TestClient) -> None:
+def test_ingest_response_and_conflict_detail_shape() -> None:
+    response = IngestResponse(
+        document_id=42,
+        chunks_created=17,
+        embedding_dimension=1536,
+        ingestion_time_ms=1240,
+    )
+    assert response.model_dump() == {
+        "document_id": 42,
+        "chunks_created": 17,
+        "embedding_dimension": 1536,
+        "ingestion_time_ms": 1240,
+    }
+
+    conflict = DocumentAlreadyIngestedDetail(document_id=42)
+    assert conflict.detail == "Document already ingested"
+    assert conflict.document_id == 42
+
+
+def test_ingest_endpoint_validates_new_contract(client: TestClient) -> None:
     response = client.post("/embeddings/ingest", json={"budgets": []})
     assert response.status_code == 422
 
 
-def test_ingest_returns_500_when_embedding_fails(client: TestClient) -> None:
+def test_ingest_endpoint_stub_returns_501_until_persistence(client: TestClient) -> None:
     sample = json.loads(Path("data/budgets_sample.json").read_text())
-    payload = {"budgets": [sample[0]]}
-
-    with patch("app.embedding_pipeline.router.OpenAIEmbedder") as mock_embedder_cls:
-        mock_embedder_cls.return_value.embed_many.side_effect = RuntimeError("api down")
-        response = client.post("/embeddings/ingest", json=payload)
-
-    assert response.status_code == 500
-    assert response.json()["detail"] == "Embedding ingestion failed"
+    payload = {
+        "source_path": "data/budgets_sample.json#BUD-2024-014",
+        "document_type": "historical_budget",
+        "content": sample[0],
+    }
+    response = client.post("/embeddings/ingest", json=payload)
+    assert response.status_code == 501
+    assert response.json()["detail"] == "Ingest persistence not implemented yet"
