@@ -4,14 +4,15 @@ Architecture notes for the FastAPI estimator service. For setup, env vars, and c
 
 ## Request paths
 
-| Path | Entry | LLM entrypoint | Prompt source |
-|------|-------|----------------|---------------|
+| Path | Entry | LLM / embed entrypoint | Prompt / corpus source |
+|------|-------|------------------------|------------------------|
 | Form API | `POST /api/v1/estimate` | `generate_estimation_from_request` | `render_estimation_prompt` (v1/v2) |
 | Session API | `POST /sessions/{id}/estimate` | `run_session_estimation` → `generate_estimation_from_messages` | `render_session_system_prompt` + `render_session_user_prompt` (v2 default) |
 | Session snapshot | `GET /sessions/{id}` | — (read-only) | — |
-| Embedding ingest | `POST /embeddings/ingest` | `OpenAIEmbedder.embed_many` | — (structural chunk text, no Jinja) |
+| Embedding ingest | `POST /embeddings/ingest` | `ingest_document` → `OpenAIEmbedder.embed_many` | Structural chunk text (no Jinja); persisted to Postgres |
+| Semantic search | `POST /search` | `search_chunks` → `OpenAIEmbedder.embed_one` | Query string embedded; nearest chunks by cosine distance |
 
-Both estimation paths converge on `_dispatch_llm` in `app/services/llm_service.py`, which routes a message array (system first, then user/assistant turns) to OpenAI, Anthropic, or Gemini. The embedding path uses the OpenAI embeddings API directly and does not share the chat LLM provider abstraction.
+Both estimation paths converge on `_dispatch_llm` in `app/services/llm_service.py`, which routes a message array (system first, then user/assistant turns) to OpenAI, Anthropic, or Gemini. Ingest and search use the OpenAI embeddings API directly (`text-embedding-3-small`) and do not share the chat LLM provider abstraction. Chat sessions remain process-local (`SessionStore`); only the embedding corpus uses Postgres.
 
 ## Multi-turn session LLM message flow
 
@@ -177,43 +178,111 @@ Pure HTTP and validation logic lives in `app/ui/streamlit_helpers.py` (no Stream
 
 The legacy Session 4 form client (`POST /api/v1/estimate`) is no longer exposed in Streamlit; the form API path remains available for curl, tests, and other HTTP clients.
 
+## Persistence layer (Postgres + pgvector)
+
+Session 08 adds a dedicated DB stack for the embedding corpus. Migrations are Alembic-managed (`estimator/alembic/`); runtime access is async SQLAlchemy 2.0 via `asyncpg`.
+
+| Piece | Location | Role |
+|-------|----------|------|
+| Settings | `config.py` → `DATABASE_URL` | Default `postgresql+asyncpg://…@localhost:5432/estimator`; Compose overrides host to `postgres` |
+| Engine / sessions | `app/db/session.py` | `create_async_engine`, `AsyncSessionLocal`, `get_session` dependency helper |
+| ORM | `app/db/models.py` | `Document`, `Chunk` (`metadata_` → column `metadata`); `EMBEDDING_DIMENSION = 1536` |
+| Migration | `alembic/versions/0001_initial_schema.py` | `CREATE EXTENSION vector`; tables + non-vector indexes; **no** HNSW/IVFFlat |
+
+### Schema
+
+```mermaid
+erDiagram
+  documents ||--o{ chunks : "CASCADE"
+  documents {
+    bigint id PK
+    text source_path
+    varchar document_type
+    timestamptz ingested_at
+    jsonb metadata
+  }
+  chunks {
+    bigint id PK
+    bigint document_id FK
+    varchar chunk_type
+    text content
+    vector_1536 embedding
+    jsonb metadata
+    timestamptz created_at
+  }
+```
+
+- **`documents`** — One row per ingested estimate (`source_path` uniqueness checked in the ingest service; indexed for lookup). Document-level JSONB holds budget_id, sector, year, technology, total hours.
+- **`chunks`** — One row per budget component (`chunk_type = budget_component`). Embedding is `vector(1536)` (nullable until filled). Chunk JSONB carries filterable fields from the Session 07 chunker. Indexes: `document_id`, `chunk_type`, GIN on `metadata`. Distance search uses sequential scan today (live-session baseline).
+
+Compose: `postgres` service (`pgvector/pgvector:pg16`) with healthcheck; `estimator` waits until healthy and receives `DATABASE_URL` pointing at that service.
+
 ## Embedding pipeline
 
-Session 07 adds `app/embedding_pipeline/` — a first step toward RAG: ingest normalized budget JSON, chunk by component, embed with `text-embedding-3-small`, and return vectors in-memory (no vector DB persistence yet).
+Session 07 introduced structural chunking + OpenAI embeddings. Session 08 persists each ingest in a single transaction and exposes cosine-distance search over stored chunks.
 
 ```mermaid
 flowchart LR
-  Client["HTTP client or compare.py"]
-  Router["embedding_pipeline/router.py<br/>POST /embeddings/ingest"]
-  Chunker["JSONStructuralChunker"]
-  Embedder["OpenAIEmbedder"]
-  OpenAI["OpenAI embeddings API"]
-
-  Client --> Router
-  Router --> Chunker --> Embedder --> OpenAI
-  Embedder --> Router
+  subgraph ingestFlow [POST /embeddings/ingest]
+    IReq["source_path + document_type + content"]
+    ISvc["ingest_service.ingest_document"]
+    Chunker["JSONStructuralChunker"]
+    EmbedMany["OpenAIEmbedder.embed_many"]
+    IReq --> ISvc --> Chunker --> EmbedMany
+    EmbedMany --> ISvc
+  end
+  subgraph searchFlow [POST /search]
+    SReq["query + k"]
+    SSvc["search_service.search_chunks"]
+    EmbedOne["OpenAIEmbedder.embed_one"]
+    SReq --> SSvc --> EmbedOne
+    EmbedOne --> SSvc
+  end
+  PG[("Postgres 16 + pgvector")]
+  ISvc --> PG
+  SSvc --> PG
 ```
 
 ### Ingest flow (`POST /embeddings/ingest`)
 
-1. **`IngestRequest`** — `budgets: list[Budget]` validated by Pydantic (`schemas.py`). Sample data in `data/budgets_sample.json`.
-2. **`JSONStructuralChunker.chunk`** — One `BudgetComponent` → one `Chunk`. Parent proposal context (sector, year, main tech) is prepended to component text as a contextual header. Metadata carries filterable fields (`budget_id`, `component_id`, `client_sector`, etc.) separate from the embedded text.
-3. **`OpenAIEmbedder.embed_many`** — Batches up to 100 chunks per API call. `RateLimitError` retries with 1s / 2s / 4s backoff. Per-batch `embedding_batch_processed` structlog events. Returns `EmbedManyResult` with embedded chunks, `total_tokens`, and `estimated_cost_usd` (from `PRICE_PER_1M_TOKENS_USD`).
-4. **`IngestResponse`** — Router maps `EmbedManyResult` into `chunks` and `stats` (`total_budgets`, `total_chunks`, `total_tokens`, `estimated_cost_usd`).
+Router: `embedding_pipeline/router.py` → `ingest_document` in `ingest_service.py`.
 
-Errors from the embedding API are logged and returned as HTTP 500 with a generic message.
+1. **`IngestRequest`** — `{source_path, document_type, content}` where `content` is one `Budget` (sample corpus: `data/budgets_sample.json`).
+2. **Duplicate check** — If `source_path` already exists, raise `DocumentAlreadyIngestedError` → HTTP **409** `{detail, document_id}`.
+3. **Insert `Document`** — JSONB metadata derived from the budget; still uncommitted.
+4. **`JSONStructuralChunker.chunk`** — One `BudgetComponent` → one in-memory chunk. Parent proposal context is prepended to component text; metadata stays filterable and separate from embedded text.
+5. **`OpenAIEmbedder.embed_many`** — Sync client invoked via `run_in_executor` so the event loop is not blocked. Batches up to 100; rate-limit retries with backoff.
+6. **`session.add_all` chunk rows** — `chunk_type="budget_component"`, vectors written to `embedding`, then **commit**. Any failure before commit rolls back (no orphan document).
+7. **`IngestResponse`** — `{document_id, chunks_created, embedding_dimension, ingestion_time_ms}`.
 
-### Compare CLI (`scripts/compare.py`)
+Other embedding API failures map to HTTP 500 with a generic message.
 
-Thin wrapper over `compare_cli.py`: embeds two strings via `OpenAIEmbedder.embed_one`, computes cosine similarity with stdlib math (`similarity.py`). Used for the three-pair sanity check documented in `app/embedding_pipeline/SANITY_CHECK.md`.
+### Search flow (`POST /search`)
+
+Router: `embedding_pipeline/search_router.py` → `search_chunks` in `search_service.py`.
+
+1. **`SearchRequest`** — `{query, k}` (`k` default 5, bounded in the schema).
+2. **`OpenAIEmbedder.embed_one`** — Same model as ingest (`run_in_executor`).
+3. **SQL** — `ORDER BY Chunk.embedding.cosine_distance(query_vector) LIMIT k` (pgvector `<=>`). No vector ANN index; sequential scan is expected at current corpus size.
+4. **`SearchResponse`** — `{query, k, search_time_ms, results[]}` with `chunk_id`, `document_id`, `chunk_type`, `content`, `distance`, `metadata`.
+
+### Corpus helpers
+
+| Script | Role |
+|--------|------|
+| `scripts/ingest_examples.py` | POSTs all 15 sample budgets with `source_path` like `data/budgets_sample.json#BUD-…` (409 treated as already loaded) |
+| `query_examples.py` | Five query archetypes against `POST /search`; sample capture in `output_examples.txt` |
 
 ### Module map
 
 | Module | Role |
 |--------|------|
-| `schemas.py` | `Budget`, `Chunk`, `EmbeddedChunk`, `IngestRequest`, `IngestResponse` |
+| `app/db/models.py` | ORM `Document` / `Chunk`; vector dimension constant |
+| `app/db/session.py` | Async engine and session factory |
+| `schemas.py` | `Budget`, chunk DTOs, `IngestRequest`/`IngestResponse`, `SearchRequest`/`SearchResponse` |
 | `chunker.py` | Structural JSON chunking; `tiktoken` token counts |
 | `embedder.py` | OpenAI `text-embedding-3-small`; batching and cost constant |
+| `ingest_service.py` | Transactional persist (duplicate 409, batch embed, commit/rollback) |
 | `router.py` | FastAPI `POST /embeddings/ingest` |
-| `similarity.py` | `cosine_similarity` (stdlib only) |
-| `compare_cli.py` | Testable CLI core for pairwise comparison |
+| `search_service.py` | Embed query + cosine-distance select |
+| `search_router.py` | FastAPI `POST /search` |
