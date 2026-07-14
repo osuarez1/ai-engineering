@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     SEMANTIC_CACHE_THRESHOLD: float = 0.85
     TIER_MEDIUM_CHARS: int = 8_000
     TIER_HIGH_CHARS: int = 20_000
+    DATABASE_URL: str = "postgresql+asyncpg://estimator:estimator@localhost:5432/estimator"
 
     @model_validator(mode="after")
     def validate_api_key_for_provider(self) -> "Settings":
