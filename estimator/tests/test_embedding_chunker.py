@@ -9,7 +9,7 @@ from app.embedding_pipeline.chunker import (
     _build_chunk_text,
     count_tokens,
 )
-from app.embedding_pipeline.schemas import Budget, BudgetComponent, Chunk, ClientMetadata
+from app.embedding_pipeline.schemas import Budget, BudgetComponent, ClientMetadata
 
 
 @pytest.fixture
