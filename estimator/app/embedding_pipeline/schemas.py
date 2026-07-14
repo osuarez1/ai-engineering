@@ -86,3 +86,30 @@ class DocumentAlreadyIngestedDetail(BaseModel):
 
     detail: str = "Document already ingested"
     document_id: int
+
+
+class SearchRequest(BaseModel):
+    """Request body for ``POST /search``."""
+
+    query: str = Field(min_length=1)
+    k: int = Field(default=5, ge=1, le=50)
+
+
+class SearchResultItem(BaseModel):
+    """One nearest-chunk hit from semantic search."""
+
+    chunk_id: int
+    document_id: int
+    chunk_type: str
+    content: str
+    distance: float
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SearchResponse(BaseModel):
+    """Response body for ``POST /search``."""
+
+    query: str
+    k: int
+    search_time_ms: int = Field(ge=0)
+    results: list[SearchResultItem]
