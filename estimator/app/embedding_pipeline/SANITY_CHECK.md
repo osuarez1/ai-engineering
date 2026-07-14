@@ -1,6 +1,6 @@
 # Embedding Sanity Check
 
-Results from `scripts/compare.py` using `text-embedding-3-small` (Session 07 pre-exercise).
+Archived Session 07 pairwise cosine similarity results for `text-embedding-3-small`. The compare CLI that produced them was removed in Session 08; live corpus validation is `query_examples.py` / `POST /search`.
 
 ## Pair A — Semantically close (expected roughly > 0.6)
 
