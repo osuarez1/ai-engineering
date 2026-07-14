@@ -24,9 +24,16 @@ services:
     ports:
       - "8000:8000"
 
+    depends_on:
+      postgres:
+        condition: service_healthy
+
     # Load environment variables (API keys, config) from the local .env file.
     env_file:
       - .env
+
+    environment:
+      DATABASE_URL: postgresql+asyncpg://estimator:estimator@postgres:5432/estimator
 
     # Bind-mount the app/ directory so code changes are reflected immediately
     # inside the container without rebuilding the image.
