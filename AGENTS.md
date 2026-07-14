@@ -6,7 +6,7 @@ Guidance for **coding assistants** (Cursor, Claude Code, etc.) and human contrib
 
 ## Repository layout
 
-This repo currently contains a single project under `estimator/` — all commands below assume `cd estimator` first. The repo is part of a Master in AI Engineering and is intended to evolve module-by-module (CAG → RAG with vector DB in later modules).
+This repo currently contains a single project under `estimator/` — all commands below assume `cd estimator` first. The repo is part of a Master in AI Engineering evolving module-by-module (CAG estimation today; pgvector corpus in place; retrieval into estimation prompts next).
 
 ## Common commands
 
@@ -35,8 +35,13 @@ uv run ruff format .
 # Terminal 2:
 uv run streamlit run streamlit_app.py
 
-# Docker (recommended dev path — bind-mounts app/ for live reload)
+# Docker (recommended — postgres + API; bind-mounts for live reload)
 docker compose up --build
+docker compose run --rm estimator alembic upgrade head
+
+# Load sample budgets / run search archetypes (API must be up; needs OPENAI_API_KEY)
+# uv run python scripts/ingest_examples.py
+# uv run python query_examples.py
 
 # Stress evaluation (Exercise 6.1)
 uv run python -m evals.stress.run                              # mocked in-process (CI / fast local)
@@ -47,11 +52,11 @@ uv run python -m evals.stress.run --http http://localhost:8000  # against runnin
 uv run python -m evals.stress.aggregate --run-mode "in-process (real LLM)" --cache-on
 ```
 
-Service listens on `http://localhost:8000`; `/docs` (Swagger) and `/redoc` are enabled. Health probe at `GET /health`. Form API: `POST /api/v1/estimate`. Session API: `POST /sessions`, `GET /sessions/{id}`, `POST /sessions/{id}/estimate`. The Streamlit UI listens on `http://localhost:8501`.
+Service listens on `http://localhost:8000`; Postgres on `localhost:5432`. `/docs` (Swagger) and `/redoc` are enabled. Health probe at `GET /health`. Form API: `POST /api/v1/estimate`. Session API: `POST /sessions`, `GET /sessions/{id}`, `POST /sessions/{id}/estimate`. Embedding corpus: `POST /embeddings/ingest`, `POST /search`. The Streamlit UI listens on `http://localhost:8501`.
 
 ## Architecture
 
-The estimator is a FastAPI service implementing **Cache Augmented Generation (CAG)**: reference estimations are inlined as static Jinja2 text inside the system prompt — no vector store, no retrieval step. This is a deliberate first-stage choice; later modules will migrate to RAG.
+The estimator implements **Cache Augmented Generation (CAG)** for estimation: reference projects are inlined as static Jinja2 text in the system prompt — the chat path has **no retrieval step**. Separately, Session 08 persists historical budget embeddings in **PostgreSQL + pgvector** and exposes `POST /embeddings/ingest` and `POST /search`; estimation prompts do **not** consume those hits yet (future RAG). Sessions remain process-local (`SessionStore`).
 
 ### Request paths
 
@@ -74,7 +79,7 @@ Both paths converge on `_dispatch_llm` in `llm_service.py`, which routes a messa
 
 ### CAG prompt source
 
-Few-shot examples live in `app/prompts/estimation/v{1,2}/examples.j2`, rendered by `app/prompts/loader.py`. Canonical project data for dynamic reference rendering is in `app/prompts/examples_catalog.py`. When this graduates to RAG, the prompts/loader seam is the replacement point.
+Few-shot examples live in `app/prompts/estimation/v{1,2}/examples.j2`, rendered by `app/prompts/loader.py`. Canonical project data for dynamic reference rendering is in `app/prompts/examples_catalog.py`. When estimation graduates to RAG, the prompts/loader seam is the replacement point for injecting retrieved chunks. Persistence and search flows: `estimator/docs/ARCHITECTURE.md`.
 
 ### Observability
 
@@ -120,7 +125,8 @@ Architecture details and session multi-turn flow: `estimator/docs/ARCHITECTURE.m
 
 - `LLM_PROVIDER` — `openai`, `anthropic` (code default), or `gemini`. `.env.example` uses `openai`.
 - `LLM_MODEL` — model id passed straight through to the SDK (e.g. `gpt-4o-mini`, `claude-haiku-4-5`, `gemini-2.0-flash`).
-- `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` — only the one matching `LLM_PROVIDER` is required.
+- `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` — the key matching `LLM_PROVIDER` is required for chat; **`OPENAI_API_KEY` is also required for embedding ingest/search** regardless of chat provider.
+- `DATABASE_URL` — async Postgres URL for the embedding corpus (default `postgresql+asyncpg://estimator:estimator@localhost:5432/estimator`; Compose sets host to `postgres`).
 - `APP_ENV` — `development` | `staging` | `production` (controls log renderer).
 - `LOG_LEVEL` — `DEBUG` | `INFO` | `WARNING` | `ERROR`.
 - `MAX_CONVERSATION_TURNS` — user/assistant pairs kept per session (default `6`).
@@ -131,7 +137,9 @@ Architecture details and session multi-turn flow: `estimator/docs/ARCHITECTURE.m
 
 ## Docker
 
-Multi-stage Dockerfile: `builder` installs prod-only deps with `uv sync --no-install-project --no-dev`, `runtime` is a clean `python:3.11-slim` that only carries `/app/.venv` and `app/`, runs as non-root `appuser`. There is a Docker-native HEALTHCHECK against `/health`. `docker-compose.yml` bind-mounts `./app` and adds `--reload` for dev — strip both for any production deployment.
+Multi-stage Dockerfile: `builder` installs prod-only deps with `uv sync --no-install-project --no-dev`; `runtime` is `python:3.11-slim` carrying `/app/.venv`, `app/`, `alembic/`, `alembic.ini`, `data/`, `scripts/`, and `query_examples.py`, running as non-root `appuser`. HEALTHCHECK probes `/health`.
+
+`docker-compose.yml` runs **`postgres`** (`pgvector/pgvector:pg16`, healthcheck + volume) and **`estimator`** (`depends_on` healthy Postgres, `DATABASE_URL` to that service). Dev bind-mounts cover `app/`, migrations, corpus, and scripts with uvicorn `--reload` — strip bind mounts and `--reload` for production. Apply schema with `docker compose run --rm estimator alembic upgrade head`.
 
 ---
 
