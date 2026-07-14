@@ -35,11 +35,14 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://estimator:estimator@postgres:5432/estimator
 
-    # Bind-mount the app/ directory so code changes are reflected immediately
-    # inside the container without rebuilding the image.
+    # Bind-mount source, migrations, corpus, and scripts for live edit / one-off runs.
     volumes:
       - ./app:/app/app
       - ./scripts:/app/scripts
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+      - ./data:/app/data
+      - ./query_examples.py:/app/query_examples.py
 
     # Override the default CMD to enable auto-reload on file changes.
     # Remove --reload for production deployments.

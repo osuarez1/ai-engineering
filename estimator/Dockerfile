@@ -38,8 +38,13 @@ WORKDIR /app
 # Bring in the pre-built virtual environment from the builder stage.
 COPY --from=builder /app/.venv /app/.venv
 
-# Copy application source code.
+# Copy application source, migrations, sample corpus, and demo scripts.
 COPY app/ /app/app/
+COPY alembic/ /app/alembic/
+COPY alembic.ini /app/alembic.ini
+COPY data/ /app/data/
+COPY query_examples.py /app/query_examples.py
+COPY scripts/ /app/scripts/
 
 # Ensure the non-root user owns everything it needs to run.
 RUN chown -R appuser:appgroup /app
