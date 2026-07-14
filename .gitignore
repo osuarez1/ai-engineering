@@ -1,3 +1,4 @@
 # Local scratch — keep directory, ignore contents
 tmp/*
 !tmp/.gitkeep
+.cursor/
