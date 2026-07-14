@@ -4,21 +4,22 @@ AI-powered software project estimation service using a **Cache Augmented Generat
 
 ## What is CAG and why we use it
 
-CAG (Cache Augmented Generation) is an architecture pattern where relevant context is injected directly into the LLM prompt as static text. In this project phase, reference estimations are included as few-shot examples inside the system prompt — no vector database or semantic search required.
+CAG (Cache Augmented Generation) is an architecture pattern where relevant context is injected directly into the LLM prompt as static text. **Estimation** still works this way: reference projects are few-shot examples inside Jinja system prompts — the chat path does not retrieve from the vector store.
 
-The current implementation uses **Jinja2** templates under `app/prompts/estimation/`: each version (`v1`, `v2`) has `system.j2`, `user.j2`, and `examples.j2`, rendered by `app/prompts/loader.py`. Two prompt sets exist for live A/B comparisons in demos.
+The implementation uses **Jinja2** templates under `app/prompts/estimation/`: each version (`v1`, `v2`) has `system.j2`, `user.j2`, and `examples.j2`, rendered by `app/prompts/loader.py`. Two prompt sets exist for live A/B comparisons in demos.
 
-This approach is ideal to start because:
-- It is simple to implement and debug
-- It requires no extra infrastructure (no embeddings, no vector stores)
-- It works well when context volume is manageable (a few examples)
+Separately, Sessions 07–08 add a **budget embedding corpus** in PostgreSQL + pgvector with `POST /embeddings/ingest` and `POST /search`. Estimation prompts do not consume those hits yet; wiring retrieval into the system prompt is the next step toward full **RAG**.
 
-In later master modules, this service will evolve to a **RAG** (Retrieval Augmented Generation) architecture with a vector database to handle a larger example corpus.
+CAG remains a good estimation baseline because:
+- It is simple to implement and debug for a small example set
+- Chat sessions stay process-local (no session DB)
+- It works well when the inlined example volume is manageable
 
 ## Prerequisites
 
-- **Docker** and **Docker Compose** installed (for the API)
-- An **API key** for OpenAI, Anthropic, or Google Gemini
+- **Docker** and **Docker Compose** (API + Postgres with pgvector)
+- An **API key** for OpenAI, Anthropic, or Google Gemini (chat LLM)
+- **`OPENAI_API_KEY`** for embedding ingest/search (`text-embedding-3-small`), even if chat uses another provider
 - **uv** and Python 3.11+ (for local runs or Streamlit)
 - Python is **not** required locally if you only use Docker for the API
 
@@ -35,9 +36,10 @@ cp .env.example .env
 |----------|-------------|
 | `LLM_PROVIDER` | Active provider: `openai`, `anthropic`, or `gemini` |
 | `LLM_MODEL` | Provider model (e.g. `gpt-4o-mini`, `claude-haiku-4-5`, `gemini-2.0-flash`) |
-| `OPENAI_API_KEY` | OpenAI key (required when `LLM_PROVIDER=openai`) |
+| `OPENAI_API_KEY` | OpenAI key (required when `LLM_PROVIDER=openai`; also required for embeddings) |
 | `ANTHROPIC_API_KEY` | Anthropic key (required when `LLM_PROVIDER=anthropic`) |
 | `GEMINI_API_KEY` | Google Gemini key (required when `LLM_PROVIDER=gemini`) |
+| `DATABASE_URL` | Async Postgres URL (default `postgresql+asyncpg://estimator:estimator@localhost:5432/estimator`; Compose overrides host to `postgres`) |
 | `APP_ENV` | Environment: `development`, `staging`, or `production` |
 | `LOG_LEVEL` | Log level: `DEBUG`, `INFO`, `WARNING`, or `ERROR` |
 | `MAX_CONVERSATION_TURNS` | User/assistant pairs kept in memory per session (default: `6`) |
@@ -58,22 +60,30 @@ cp .env.example .env
    cd estimator
    ```
 
-2. Configure `.env` (see section above).
+2. Configure `.env` (see section above). Include `OPENAI_API_KEY` if you will ingest or search embeddings.
 
-3. Build and start the service:
+3. Build and start **Postgres + API**:
    ```bash
    docker compose up --build
    ```
 
-4. The API will be available at `http://localhost:8000`
+4. Apply migrations (once per fresh database):
+   ```bash
+   docker compose run --rm estimator alembic upgrade head
+   ```
 
-> Docker runs **only the API** (port 8000). The Streamlit UI is not included in `docker-compose.yml` and must be run locally (see below).
+5. The API is at `http://localhost:8000`; Postgres is on `localhost:5432`.
+
+> Compose runs `postgres` (`pgvector/pgvector:pg16`) and `estimator`. Streamlit is **not** in Compose — run it on the host (see below).
 
 ## Alternative: local run without Docker
+
+Postgres must still be reachable (e.g. `docker compose up -d postgres`). Point `DATABASE_URL` at `localhost` (the `.env.example` default), then:
 
 ```bash
 uv sync
 # Configure .env with your API keys
+uv run alembic upgrade head
 uv run uvicorn app.main:app --reload
 ```
 
@@ -182,99 +192,65 @@ uv run python -m evals.stress.aggregate --run-mode "in-process (real LLM)" --cac
 
 The runner writes `evals/stress/results.csv` (tracked). Each turn reads `GET /sessions/{id}` after the estimate to obtain real `last_turn_observed` — see [docs/ARCHITECTURE.md#session-snapshot-and-observation](docs/ARCHITECTURE.md#session-snapshot-and-observation). Localized reports live under `evals/stress/localized/` (`REPORT.en.md`, `REPORT.es.md`); `REPORT.md` at the stress root is temporarily a Spanish publish copy. Backups and run logs are gitignored.
 
-## Embedding pipeline (Session 07 pre-exercise)
+## Embedding corpus + semantic search (Sessions 07–08)
 
-Structural chunking and OpenAI embeddings for historical budget proposals. Session 07 originally returned vectors in-memory; Session 08 (below) persists them in Postgres + pgvector and adds semantic search.
+Structural chunking and OpenAI embeddings for historical budgets, persisted in PostgreSQL 16 + pgvector. Schema is Alembic-managed (`documents` + `chunks`). Estimation still uses CAG; this corpus is searchable via HTTP but not yet injected into estimate prompts.
 
-**Requirements:** `OPENAI_API_KEY` in `.env` (used by `text-embedding-3-small` regardless of `LLM_PROVIDER`).
-
-### `POST /embeddings/ingest`
-
-Chunks each budget component, embeds with `text-embedding-3-small`, and returns vectorized chunks plus stats.
-
-```bash
-# Ingest the first proposal from the sample dataset
-jq -n --slurpfile budgets data/budgets_sample.json '{budgets: [$budgets[0]]}' | \
-  curl -s -X POST http://localhost:8000/embeddings/ingest \
-    -H "Content-Type: application/json" \
-    -d @- | jq '{chunks: (.chunks | length), stats}'
-```
-
-**Response** (`IngestResponse`):
-
-```json
-{
-  "chunks": [
-    {
-      "chunk_id": "BUD-2024-014::AUTH-001",
-      "text": "[Project: Mobile banking API...]\n...",
-      "metadata": {
-        "budget_id": "BUD-2024-014",
-        "component_id": "AUTH-001",
-        "client_sector": "finance",
-        "main_technology": "ruby_on_rails",
-        "year": 2024,
-        "complexity": "high",
-        "estimated_hours": 120
-      },
-      "token_count": 99,
-      "embedding": [0.012, -0.034, "..."]
-    }
-  ],
-  "stats": {
-    "total_budgets": 1,
-    "total_chunks": 4,
-    "total_tokens": 353,
-    "estimated_cost_usd": 0.00000706
-  }
-}
-```
-
-Sample data: `data/budgets_sample.json` (15 normalized proposals). See also `app/embedding_pipeline/SANITY_CHECK.md` for embedding similarity sanity results.
-
-Pipeline details: [docs/ARCHITECTURE.md#embedding-pipeline](docs/ARCHITECTURE.md#embedding-pipeline).
-
-### `scripts/compare.py` — cosine similarity CLI
-
-Embed two texts and print their cosine similarity (stdlib math, no numpy).
-
-**Outside the container** (from `estimator/`, loads `.env` via pydantic-settings):
-
-```bash
-uv run python scripts/compare.py \
-  --text-a "OAuth 2.0 authentication backend for fintech" \
-  --text-b "JWT-based authorization service for banking app"
-```
-
-**Inside the container** (requires `docker compose up`; service name is `estimator`):
-
-```bash
-docker compose exec estimator python scripts/compare.py \
-  --text-a "OAuth 2.0 authentication backend for fintech" \
-  --text-b "JWT-based authorization service for banking app"
-```
-
-Example output:
-
-```text
-Text A: OAuth 2.0 authentication backend for fintech
-Text B: JWT-based authorization service for banking app
-Cosine similarity: 0.6330
-```
-
-## Vector store + search (Session 08 pre-exercise)
-
-PostgreSQL 16 + pgvector persists Session 07 chunks and serves semantic search. Schema is managed with Alembic (`documents` + `chunks`). Use `DATABASE_URL` (see `.env.example`); Compose sets it to the `postgres` service automatically.
+**Requirements:** migrated database, `DATABASE_URL`, and `OPENAI_API_KEY` (embeddings use `text-embedding-3-small` regardless of `LLM_PROVIDER`).
 
 ```bash
 docker compose up -d --build
 docker compose run --rm estimator alembic upgrade head
 uv run python scripts/ingest_examples.py   # 15 budgets → POST /embeddings/ingest
 uv run python query_examples.py            # five query archetypes → POST /search
-# Captured sample: output_examples.txt
+# Sample capture: output_examples.txt
 ```
 
-`POST /embeddings/ingest` accepts `{source_path, document_type, content}` and returns `{document_id, chunks_created, embedding_dimension, ingestion_time_ms}` (409 on duplicate `source_path`). `POST /search` accepts `{query, k}` and returns ranked chunks with cosine `distance`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Sample data: `data/budgets_sample.json` (15 normalized proposals, ~64 components). Pipeline details: [docs/ARCHITECTURE.md#embedding-pipeline](docs/ARCHITECTURE.md#embedding-pipeline).
+
+### `POST /embeddings/ingest`
+
+Persists one budget document and its embedded chunks in a **single transaction**. Duplicate `source_path` returns **409** `{detail, document_id}`.
+
+```bash
+jq -n --slurpfile budgets data/budgets_sample.json \
+  '{source_path: "data/budgets_sample.json#\($budgets[0].budget_id)",
+    document_type: "budget",
+    content: $budgets[0]}' | \
+  curl -s -X POST http://localhost:8000/embeddings/ingest \
+    -H "Content-Type: application/json" \
+    -d @- | jq .
+```
+
+**Response** (`IngestResponse`):
+
+```json
+{
+  "document_id": 1,
+  "chunks_created": 4,
+  "embedding_dimension": 1536,
+  "ingestion_time_ms": 842
+}
+```
+
+### `POST /search`
+
+Embed the query with the same model, then return the `k` nearest chunks by **cosine distance** (sequential scan; no ANN index yet).
+
+```bash
+curl -s -X POST http://localhost:8000/search \
+  -H "Content-Type: application/json" \
+  -d '{"query":"REST API development with JWT authentication for financial sector","k":5}' | jq .
+```
+
+**Response** (`SearchResponse`): `{query, k, search_time_ms, results[]}` where each result has `chunk_id`, `document_id`, `chunk_type`, `content`, `distance`, `metadata`.
+
+### Corpus helpers
+
+| Script | Role |
+|--------|------|
+| `scripts/ingest_examples.py` | POSTs all 15 sample budgets (`source_path` like `data/budgets_sample.json#BUD-…`; treats 409 as already loaded) |
+| `query_examples.py` | Five query archetypes against `POST /search`; see `output_examples.txt` for a captured run |
 
 ### Design decisions
 
@@ -349,8 +325,11 @@ flowchart LR
 estimator/
 ├── app/
 │   ├── main.py                    # FastAPI, CORS, GET /health
-│   ├── config.py                  # Pydantic Settings
+│   ├── config.py                  # Pydantic Settings (incl. DATABASE_URL)
 │   ├── logging.py                 # structlog (JSON in production)
+│   ├── db/
+│   │   ├── models.py              # Document / Chunk ORM (pgvector)
+│   │   └── session.py             # async engine + sessionmaker
 │   ├── routers/estimations.py     # POST /api/v1/estimate
 │   ├── routers/sessions.py        # POST/GET /sessions, POST /sessions/{id}/estimate
 │   ├── schemas/request_form.py    # EstimationRequest / EstimationResponse
@@ -369,33 +348,38 @@ estimator/
 │   │   ├── loader.py              # render_estimation_prompt()
 │   │   └── estimation/v1|v2/      # system.j2, user.j2, examples.j2
 │   ├── ui/streamlit_helpers.py    # Pure HTTP helpers for session client
-│   ├── embedding_pipeline/        # Session 07: structural chunking + embeddings
+│   ├── embedding_pipeline/        # Chunk, embed, persist, search
 │   │   ├── chunker.py             # JSONStructuralChunker (one component = one chunk)
 │   │   ├── embedder.py            # OpenAIEmbedder (text-embedding-3-small)
+│   │   ├── schemas.py             # Budget + ingest/search contracts
+│   │   ├── ingest_service.py      # Transactional document ingest
 │   │   ├── router.py              # POST /embeddings/ingest
-│   │   ├── similarity.py          # stdlib cosine_similarity
-│   │   ├── compare_cli.py         # compare_texts / main (testable CLI core)
-│   │   └── SANITY_CHECK.md        # Three-pair similarity sanity results
+│   │   ├── search_service.py      # Cosine-distance chunk search
+│   │   └── search_router.py       # POST /search
 │   └── fixtures/                  # Sample transcriptions (fixtures only)
+├── alembic/                       # Async migrations (0001 documents + chunks)
+├── alembic.ini
 ├── data/
 │   └── budgets_sample.json        # 15 normalized proposals for embedding ingest
 ├── scripts/
-│   └── compare.py                 # CLI entrypoint for embedding similarity
+│   └── ingest_examples.py         # Load sample corpus via HTTP
+├── query_examples.py              # Five-archetype search demo
+├── output_examples.txt            # Captured query_examples output
 ├── evals/stress/                  # Runner, metrics, aggregator (6.1)
 │   ├── localized/                 # REPORT.en.md, REPORT.es.md
 │   └── REPORT.md                  # Published copy (Spanish, temporary)
-├── docs/ARCHITECTURE.md           # Architecture flows (form vs multi-turn session)
+├── docs/ARCHITECTURE.md           # Form, session, persistence, embedding flows
 ├── streamlit_app.py               # Conversational UI (HTTP session client)
 ├── tests/                         # pytest + AppTest
 ├── Dockerfile                     # Multi-stage build with uv
-├── docker-compose.yml             # Local development configuration
+├── docker-compose.yml             # postgres + estimator
 └── pyproject.toml                 # Dependencies and tooling
 ```
 
 ## Tests and lint
 
 ```bash
-uv run pytest -v          # 303 tests, 100% coverage on app/ + streamlit_app.py + scripts/
+uv run pytest -v          # 334 tests, 100% coverage on app/ + streamlit_app.py + scripts/
 uv run ruff check .
 uv run ruff format .
 ```
@@ -411,4 +395,4 @@ With the service running, access Swagger UI at:
 
 ---
 
-> This project is part of the **Master in AI Engineering** and will serve as the base to evolve toward a RAG architecture with a vector database in later modules.
+> This project is part of the **Master in AI Engineering**. Estimation uses CAG; a Postgres + pgvector corpus is already in place for budgets. The next evolution is **RAG**: retrieve relevant chunks into the estimation prompt.
