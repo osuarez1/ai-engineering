@@ -65,22 +65,24 @@ class EmbedManyResult(BaseModel):
 
 
 class IngestRequest(BaseModel):
-    """Request body for ``POST /embeddings/ingest``."""
+    """Request body for ``POST /embeddings/ingest`` (persisted pipeline)."""
 
-    budgets: list[Budget] = Field(min_length=1)
-
-
-class IngestStats(BaseModel):
-    """Aggregated ingestion statistics returned with embedded chunks."""
-
-    total_budgets: int = Field(ge=0)
-    total_chunks: int = Field(ge=0)
-    total_tokens: int = Field(ge=0)
-    estimated_cost_usd: float = Field(ge=0.0)
+    source_path: str = Field(min_length=1)
+    document_type: str = Field(min_length=1, max_length=50)
+    content: Budget
 
 
 class IngestResponse(BaseModel):
-    """Response body for ``POST /embeddings/ingest``."""
+    """Response body for successful document ingestion."""
 
-    chunks: list[EmbeddedChunk]
-    stats: IngestStats
+    document_id: int
+    chunks_created: int = Field(ge=0)
+    embedding_dimension: int = Field(ge=1)
+    ingestion_time_ms: int = Field(ge=0)
+
+
+class DocumentAlreadyIngestedDetail(BaseModel):
+    """409 Conflict body when ``source_path`` was already ingested."""
+
+    detail: str = "Document already ingested"
+    document_id: int
